@@ -98,10 +98,11 @@ export function analyze(evidence: Evidence): InsightSnapshot {
   const explanations = buildExplanations(traits);
 
   const motifs: string[] = [];
-  if (traits.some((t) => t.id === "night_oriented" && t.confidence >= 0.25)) {
+  // Any positive trait confidence is enough to expose a motif to the UI.
+  if (traits.some((t) => t.id === "night_oriented" && t.confidence > 0)) {
     motifs.push("night");
   }
-  if (traits.some((t) => t.id === "creative_maker" && t.confidence >= 0.25)) {
+  if (traits.some((t) => t.id === "creative_maker" && t.confidence > 0)) {
     motifs.push("creative");
   }
 
