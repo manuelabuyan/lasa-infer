@@ -28,6 +28,10 @@ export {
   computeDataConfidence,
   scoreTaste,
   formatTasteProfile,
+  COLOUR_DEFS,
+  listTasteColours,
+  getTasteColour,
+  inferTasteColour,
   type ScoreTasteOptions,
   type DataConfidence,
   type TasteAxisDef,
@@ -35,6 +39,8 @@ export {
   type TasteProfile,
   type TasteSignalDef,
   type TasteSignalResult,
+  type TasteColourDef,
+  type TasteColourResult,
   type RegistryStatus,
 } from "./taste/index.js";
 export type {

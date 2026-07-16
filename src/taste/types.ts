@@ -82,6 +82,8 @@ export interface TasteProfile {
   inferVersion: string;
   axes: TasteAxisResult[];
   dataConfidence: DataConfidence;
+  /** First visual conclusion — drives the living graphic colour. */
+  colour: import("./colour.js").TasteColourResult;
   /** Nested tree for docs / debugging / UI. */
   model: TasteModelDescription;
 }

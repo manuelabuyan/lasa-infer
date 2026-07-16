@@ -13,6 +13,7 @@ import type {
   TasteSignalResult,
 } from "./types.js";
 import { describeTasteModel } from "./describe.js";
+import { inferTasteColour } from "./colour.js";
 
 function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
@@ -130,10 +131,13 @@ export function scoreTaste(options: ScoreTasteOptions = {}): TasteProfile {
     axesOut.push(axisResult);
   }
 
+  const colour = inferTasteColour(evidence, snapshots);
+
   return {
     inferVersion: INFER_VERSION,
     axes: axesOut,
     dataConfidence,
+    colour,
     model: describeTasteModel(),
   };
 }
@@ -142,6 +146,7 @@ export function scoreTaste(options: ScoreTasteOptions = {}): TasteProfile {
 export function formatTasteProfile(profile: TasteProfile): string {
   const lines: string[] = [
     `infer ${profile.inferVersion}`,
+    `colour: ${profile.colour.label} (${profile.colour.hex}) — ${profile.colour.summary}`,
     `data confidence: ${(profile.dataConfidence.score * 100).toFixed(0)}% (${profile.dataConfidence.label}) — ${profile.dataConfidence.summary}`,
     "axes:",
   ];

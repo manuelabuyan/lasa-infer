@@ -26,3 +26,11 @@ export {
   formatTasteProfile,
   type ScoreTasteOptions,
 } from "./score.js";
+export {
+  COLOUR_DEFS,
+  listTasteColours,
+  getTasteColour,
+  inferTasteColour,
+  type TasteColourDef,
+  type TasteColourResult,
+} from "./colour.js";

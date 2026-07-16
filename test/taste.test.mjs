@@ -81,6 +81,12 @@ test("low vs high data confidence", () => {
   const craft = high.axes.find((a) => a.axisId === "craft");
   assert.ok(craft && craft.score !== null && craft.score > 0.2);
 
+  assert.ok(high.colour?.id);
+  assert.ok(high.colour.rgb.includes(","));
+  // Film/photo language should lean ember (or at least not fail)
+  assert.ok(["ember", "violet", "gold", "ink", "moss", "blush", "slate"].includes(high.colour.id));
+
   const text = formatTasteProfile(high);
   assert.ok(text.includes("data confidence"));
+  assert.ok(text.includes("colour:"));
 });
