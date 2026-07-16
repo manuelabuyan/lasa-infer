@@ -4,11 +4,43 @@
 
 This package is the only public part of Lasa’s “how we conclude” layer:
 
-- **Factors** — what signals we extract from linked social evidence  
-- **Merge / confidence rules** — how more connected accounts improve (or qualify) results  
-- **Explanations** — structured “why” for every trait, so users can audit conclusions  
+- **Taste axes** — breadth, depth, distinctiveness, coherence, etc. (declarative registry)  
+- **Signals** — weighted, toggleable extractors per axis  
+- **Data confidence** — how much public evidence we have (for the UI confidence bar)  
+- **Factors / traits** — older keyword traits still available via `analyze()`  
 
 The Lasa product app (auth, OAuth, UI, sync, hosting) stays **private**. This repo has **no network calls, no API keys, and no platform OAuth code**.
+
+## Taste model (flexible registry)
+
+Axes and signals live in plain lists so you can toggle and inspect them:
+
+| File | What to edit |
+|------|----------------|
+| `src/taste/registry.ts` | `TASTE_AXES` — set `status` to `active` / `stub` / `parked` / `disabled` |
+| `src/taste/signals/registry.ts` | `TASTE_SIGNALS` — weights, axis assignment, status |
+| `src/taste/lexicons.ts` | Word lists for topics, clichés, craft, etc. |
+| `src/taste/signals/extractors.ts` | Signal id → scoring function |
+
+**List everything:**
+
+```ts
+import {
+  listTasteAxes,
+  listTasteSignals,
+  describeTasteModel,
+  printTasteModel,
+  scoreTaste,
+} from "lasa-infer";
+
+console.log(printTasteModel()); // human-readable dump of axes → signals
+
+const profile = scoreTaste({ snapshots: [/* LinkSnapshot[] from the app */] });
+console.log(profile.dataConfidence); // bar: score + label + summary
+console.log(profile.axes);           // per-axis scores (stubs have score: null)
+```
+
+**Add an axis later:** append to `TASTE_AXES`, add signals with that `axisId`, implement extractors with matching ids, bump `INFER_VERSION`.
 
 ## Install
 

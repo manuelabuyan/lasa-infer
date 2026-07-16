@@ -1,2 +1,2 @@
-/** Bump when factor definitions or scoring rules change in a user-visible way. */
-export const INFER_VERSION = "0.1.0";
+/** Bump when factor / taste definitions or scoring rules change in a user-visible way. */
+export const INFER_VERSION = "0.2.0";

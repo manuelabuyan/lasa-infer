@@ -15,6 +15,28 @@ export {
   type LinkContentKind,
   type LinkSnapshot,
 } from "./linkEvidence.js";
+export {
+  TASTE_AXES,
+  TASTE_SIGNALS,
+  listTasteAxes,
+  listTasteSignals,
+  getTasteAxis,
+  getTasteSignal,
+  listExtractorIds,
+  describeTasteModel,
+  printTasteModel,
+  computeDataConfidence,
+  scoreTaste,
+  formatTasteProfile,
+  type ScoreTasteOptions,
+  type DataConfidence,
+  type TasteAxisDef,
+  type TasteAxisResult,
+  type TasteProfile,
+  type TasteSignalDef,
+  type TasteSignalResult,
+  type RegistryStatus,
+} from "./taste/index.js";
 export type {
   BioItem,
   ContentItem,
