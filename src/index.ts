@@ -7,6 +7,14 @@ export {
   getFactorDefinition,
   type FactorDefinition,
 } from "./factors/registry.js";
+export {
+  evidenceFromLinkSnapshots,
+  linkSnapshotRichness,
+  platformFromHost,
+  type LinkAccess,
+  type LinkContentKind,
+  type LinkSnapshot,
+} from "./linkEvidence.js";
 export type {
   BioItem,
   ContentItem,

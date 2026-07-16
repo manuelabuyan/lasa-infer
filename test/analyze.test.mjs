@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { analyze, INFER_VERSION } from "../dist/index.js";
+import {
+  analyze,
+  evidenceFromLinkSnapshots,
+  INFER_VERSION,
+  linkSnapshotRichness,
+} from "../dist/index.js";
 
 test("empty evidence yields stage 0 and low coverage", () => {
   const snap = analyze({ platforms: [] });
