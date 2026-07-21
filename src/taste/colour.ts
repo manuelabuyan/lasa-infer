@@ -1,16 +1,16 @@
 /**
  * Person colour — first visual taste conclusion.
  *
- * Design goals (v0.4):
+ * Design goals (v0.5):
  * - Wide editable palette (COLOUR_DEFS)
- * - Blend top colours (not only winner-take-all)
+ * - Blend top colours (not only winner-take-all), sharper when signal is clear
  * - Weight evidence by access / richness
  * - Word-boundary token matching
- * - Soft influence from taste axes
+ * - Soft axis nudge only when text/image already has colour signal
  * - No platform-type bias (Instagram vs TikTok etc. never tints taste)
  * - Strip platform chrome (e.g. IG "photos and videos" boilerplate)
  * - Image palette signals (swatches / warmth / vibrance) as second channel
- * - Change after first link; low confidence → lighter/softer colour
+ * - Strength ramp: 1 solid link → clear tint; 3 links → strong / bold colour
  */
 
 import {
@@ -430,39 +430,54 @@ function softmax(scores: Record<string, number>, temperature = 0.85): Record<str
 }
 
 /**
- * Low confidence → lighter / softer; high confidence → bolder (higher sat, deeper mid).
- * confidence 0 → wash toward light slate; 1 → full blended colour.
+ * Map confidence → display colour strength.
+ * Soft end keeps hue (not grey wash); hard end is full palette RGB.
+ * Avoids neon overshoot — we approach `rgb`, we do not push past it.
  */
 function applyConfidenceBoldness(
   rgb: { r: number; g: number; b: number },
   confidence: number,
 ): { r: number; g: number; b: number } {
   const c = clamp01(confidence);
-  // Low conf → pastel of the same hue family (still visibly coloured).
-  // High conf → full bold chroma.
+  // Soft: still clearly tinted (was too washed toward 210 → looked weak)
   const soft = {
-    r: 210 + (rgb.r - 210) * 0.35,
-    g: 210 + (rgb.g - 210) * 0.35,
-    b: 210 + (rgb.b - 210) * 0.35,
+    r: 188 + (rgb.r - 188) * 0.55,
+    g: 188 + (rgb.g - 188) * 0.55,
+    b: 188 + (rgb.b - 188) * 0.55,
   };
-  // Floor at 0.42 so first-link / low conf still reads as a clear tint
-  const t = 0.42 + 0.58 * c;
+  // c=0.55 (typical 1-link) → t≈0.82; c=0.9 (3 links) → t≈0.96
+  const t = 0.58 + 0.42 * c;
   let r = soft.r + (rgb.r - soft.r) * t;
   let g = soft.g + (rgb.g - soft.g) * t;
   let b = soft.b + (rgb.b - soft.b) * t;
 
+  // Mild chroma lift only — enough to pop, not blow past palette
   const mean = (r + g + b) / 3;
-  const satBoost = 0.25 + 0.45 * c;
+  const satBoost = 0.12 + 0.22 * c;
   r = mean + (r - mean) * (1 + satBoost);
   g = mean + (g - mean) * (1 + satBoost);
   b = mean + (b - mean) * (1 + satBoost);
 
-  const depth = 1 - 0.1 * c;
+  // Slightly deeper as confidence rises (richer, not washed-out)
+  const depth = 0.97 - 0.04 * (1 - c);
   return {
     r: Math.max(0, Math.min(255, r * depth)),
     g: Math.max(0, Math.min(255, g * depth)),
     b: Math.max(0, Math.min(255, b * depth)),
   };
+}
+
+/**
+ * Link-count strength targets the product brief:
+ * - 1 link with real signal → clear colour change
+ * - 3 links → strong / bold
+ */
+function linkCountStrength(n: number, hasSignal: boolean): number {
+  if (!hasSignal || n <= 0) return 0;
+  if (n === 1) return 0.62;
+  if (n === 2) return 0.78;
+  if (n === 3) return 0.9;
+  return 0.95;
 }
 
 export type InferColourOptions = {
@@ -622,17 +637,36 @@ export function inferTasteColour(
 
   // Gate on content/image — not on axis crumbs
   const signalTooWeak = contentMax < 0.2;
+  const linkN = snapshots.length;
 
   let weights: Record<string, number>;
   if (signalTooWeak) {
     weights = { slate: 1 };
   } else {
-    // Prefer sharper colour assignment (lower temperature)
-    weights = softmax(rawScores, textThin ? 0.5 : 0.65);
-    // Small slate floor only when signal is weak — not enough to beat a real hit
+    // Lower temperature = sharper primary (more decisive colour)
+    // More links → slightly sharper still
+    const temperature =
+      linkN >= 3 ? 0.38 : linkN === 2 ? 0.45 : textThin ? 0.42 : 0.5;
+    weights = softmax(rawScores, temperature);
+
+    // Winner bias: pull mass toward top colour so 1 clear hit isn't a muddy blend
+    let topId = "slate";
+    let topW = -1;
+    for (const [id, w] of Object.entries(weights)) {
+      if (w > topW) {
+        topW = w;
+        topId = id;
+      }
+    }
+    if (topId !== "slate" && topW > 0) {
+      const bias = linkN >= 3 ? 0.35 : linkN === 2 ? 0.28 : 0.22;
+      weights[topId] = topW + bias;
+    }
+
+    // Tiny slate floor only when signal is weak
     const slateFloor =
-      maxNonSlate < 0.8 ? 0.06 : maxNonSlate < 2 ? 0.03 : 0.015;
-    weights.slate = (weights.slate ?? 0) * 0.35 + slateFloor;
+      maxNonSlate < 0.8 ? 0.04 : maxNonSlate < 2 ? 0.02 : 0.01;
+    weights.slate = (weights.slate ?? 0) * 0.25 + slateFloor;
     const sum = Object.values(weights).reduce((a, b) => a + b, 0) || 1;
     for (const id of Object.keys(weights)) weights[id]! /= sum;
   }
@@ -670,10 +704,10 @@ export function inferTasteColour(
   const blended = mixRgb(blendParts);
   const boldHex = rgbToHex(blended.r, blended.g, blended.b);
 
-  // Confidence: data conf + text + image + decisiveness of blend
+  // Confidence: content quality + link-count strength ramp
   const dataC = options.dataConfidence?.score ?? clamp01(totalWeight / 3);
   const confFromText =
-    textLen < 8 ? 0.25 : textLen < 40 ? 0.45 : textLen < 120 ? 0.65 : 0.85;
+    textLen < 8 ? 0.35 : textLen < 40 ? 0.55 : textLen < 120 ? 0.75 : 0.9;
   const confFromImage =
     imageSignals.length === 0
       ? 0
@@ -683,13 +717,19 @@ export function inferTasteColour(
         );
   const top1 = blendMeta[0]?.weight ?? 0;
   const top2 = blendMeta[1]?.weight ?? 0;
-  const decisiveness = clamp01((top1 - top2) * 2 + top1 * 0.3);
-  const confidence = clamp01(
-    0.3 * dataC +
-      0.3 * confFromText +
-      0.15 * confFromImage +
-      0.25 * decisiveness,
+  const decisiveness = clamp01((top1 - top2) * 2.2 + top1 * 0.35);
+  const contentConf = clamp01(
+    0.28 * dataC +
+      0.28 * confFromText +
+      0.22 * confFromImage +
+      0.22 * decisiveness,
   );
+  // Once we have a real colour signal, link count floors strength (1 → clear, 3 → strong)
+  const hasColourSignal = !signalTooWeak && primaryId !== "slate";
+  const linkFloor = linkCountStrength(linkN, hasColourSignal || !signalTooWeak);
+  const confidence = signalTooWeak
+    ? clamp01(0.25 * dataC + 0.2 * confFromText)
+    : clamp01(Math.max(contentConf, linkFloor));
 
   const display = applyConfidenceBoldness(blended, confidence);
   const rgbStr = `${Math.round(display.r)}, ${Math.round(display.g)}, ${Math.round(display.b)}`;
