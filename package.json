@@ -1,6 +1,6 @@
 {
   "name": "lasa-infer",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "Open-source inference algorithm for Lasa — factors, multi-account merge rules, and explanations",
   "license": "MIT",
   "type": "module",

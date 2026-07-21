@@ -432,27 +432,30 @@ function applyConfidenceBoldness(
   confidence: number,
 ): { r: number; g: number; b: number } {
   const c = clamp01(confidence);
-  // Soft light target for low confidence
-  const soft = { r: 200, g: 202, b: 208 };
-  // Blend toward soft when low conf; keep colour when high
-  const t = 0.2 + 0.8 * c; // never fully soft, never ignore conf
+  // Low conf → pastel of the same hue family (still visibly coloured).
+  // High conf → full bold chroma.
+  const soft = {
+    r: 210 + (rgb.r - 210) * 0.35,
+    g: 210 + (rgb.g - 210) * 0.35,
+    b: 210 + (rgb.b - 210) * 0.35,
+  };
+  // Floor at 0.42 so first-link / low conf still reads as a clear tint
+  const t = 0.42 + 0.58 * c;
   let r = soft.r + (rgb.r - soft.r) * t;
   let g = soft.g + (rgb.g - soft.g) * t;
   let b = soft.b + (rgb.b - soft.b) * t;
 
-  // Boost saturation-ish by pushing channels away from grey mean when conf high
   const mean = (r + g + b) / 3;
-  const satBoost = 0.35 * c;
+  const satBoost = 0.25 + 0.45 * c;
   r = mean + (r - mean) * (1 + satBoost);
   g = mean + (g - mean) * (1 + satBoost);
   b = mean + (b - mean) * (1 + satBoost);
 
-  // Slight darken at high conf for "bolder"
-  const depth = 1 - 0.08 * c;
+  const depth = 1 - 0.1 * c;
   return {
-    r: clamp01(r / 255) * 255 * depth,
-    g: clamp01(g / 255) * 255 * depth,
-    b: clamp01(b / 255) * 255 * depth,
+    r: Math.max(0, Math.min(255, r * depth)),
+    g: Math.max(0, Math.min(255, g * depth)),
+    b: Math.max(0, Math.min(255, b * depth)),
   };
 }
 
@@ -528,25 +531,31 @@ export function inferTasteColour(
     rawScores[def.id] = s;
   }
 
-  // Soft platform hints (low weight — not destiny)
+  // Platform hints — stronger when text is thin so the *first* link still tints.
   const platforms = new Set(evidence.platforms);
-  const platformHints: Array<{ platform: PlatformId; colourId: string; w: number }> =
-    [
-      { platform: "tiktok", colourId: "violet", w: 0.15 },
-      { platform: "tiktok", colourId: "magenta", w: 0.08 },
-      { platform: "linkedin", colourId: "navy", w: 0.12 },
-      { platform: "linkedin", colourId: "ink", w: 0.1 },
-      { platform: "instagram", colourId: "blush", w: 0.1 },
-      { platform: "instagram", colourId: "coral", w: 0.08 },
-      { platform: "instagram", colourId: "ember", w: 0.08 },
-      { platform: "youtube", colourId: "ink", w: 0.08 },
-      { platform: "youtube", colourId: "crimson", w: 0.06 },
-      { platform: "x", colourId: "charcoal", w: 0.08 },
-      { platform: "x", colourId: "sky", w: 0.06 },
-    ];
+  const textThin = textLen < 40;
+  const platformHints: Array<{
+    platform: PlatformId;
+    colourId: string;
+    w: number;
+  }> = [
+    { platform: "tiktok", colourId: "violet", w: 0.9 },
+    { platform: "tiktok", colourId: "magenta", w: 0.45 },
+    { platform: "linkedin", colourId: "navy", w: 0.85 },
+    { platform: "linkedin", colourId: "ink", w: 0.55 },
+    { platform: "instagram", colourId: "blush", w: 0.85 },
+    { platform: "instagram", colourId: "coral", w: 0.55 },
+    { platform: "instagram", colourId: "ember", w: 0.4 },
+    { platform: "youtube", colourId: "crimson", w: 0.7 },
+    { platform: "youtube", colourId: "ink", w: 0.45 },
+    { platform: "x", colourId: "sky", w: 0.65 },
+    { platform: "x", colourId: "charcoal", w: 0.4 },
+  ];
+  const platformScale = textThin ? 1.35 : 0.45;
   for (const h of platformHints) {
     if (platforms.has(h.platform) && rawScores[h.colourId] !== undefined) {
-      rawScores[h.colourId] = (rawScores[h.colourId] ?? 0) + h.w;
+      rawScores[h.colourId] =
+        (rawScores[h.colourId] ?? 0) + h.w * platformScale;
     }
   }
 
@@ -570,7 +579,7 @@ export function inferTasteColour(
   rawScores.blush = (rawScores.blush ?? 0) + curation * 0.1;
   rawScores.gold = (rawScores.gold ?? 0) + depth * 0.1;
 
-  // First-link friendly: any positive non-slate signal can shift colour
+  // First-link friendly: platform alone is enough to leave pure slate
   const maxNonSlate = Math.max(
     0,
     ...Object.entries(rawScores)
@@ -578,27 +587,20 @@ export function inferTasteColour(
       .map(([, v]) => v),
   );
 
-  // If almost no signal, pure slate
-  const useSlateOnly = textLen < 6 && maxNonSlate < 0.2 && snapshots.length === 0;
+  // Only pure slate if we have literally nothing (no links at all)
+  const useSlateOnly =
+    snapshots.length === 0 && platforms.size === 0 && maxNonSlate < 0.05;
 
   let weights: Record<string, number>;
   if (useSlateOnly) {
     weights = { slate: 1 };
-  } else if (maxNonSlate < 0.35) {
-    // Weak signal: blend a little colour into slate (still visible after first thin link)
-    const soft = softmax(rawScores, 1.1);
-    weights = {};
-    for (const [id, w] of Object.entries(soft)) {
-      weights[id] = id === "slate" ? w * 0.55 + 0.45 : w * 0.55;
-    }
-    // Renormalize
-    const sum = Object.values(weights).reduce((a, b) => a + b, 0) || 1;
-    for (const id of Object.keys(weights)) weights[id]! /= sum;
   } else {
-    weights = softmax(rawScores, 0.75);
-    // Keep a floor of slate so thin multi-link doesn't overclaim
-    const slateFloor = 0.08 * (1 - clamp01(maxNonSlate / 4));
-    weights.slate = (weights.slate ?? 0) + slateFloor;
+    // Prefer sharper colour assignment (lower temperature)
+    weights = softmax(rawScores, textThin ? 0.55 : 0.7);
+    // Small slate floor only when signal is weak
+    const slateFloor =
+      maxNonSlate < 0.5 ? 0.12 : maxNonSlate < 1.5 ? 0.05 : 0.02;
+    weights.slate = (weights.slate ?? 0) * 0.5 + slateFloor;
     const sum = Object.values(weights).reduce((a, b) => a + b, 0) || 1;
     for (const id of Object.keys(weights)) weights[id]! /= sum;
   }
