@@ -531,7 +531,8 @@ export function inferTasteColour(
     rawScores[def.id] = s;
   }
 
-  // Platform hints — stronger when text is thin so the *first* link still tints.
+  // Platform hints — very light only. Text/topics should dominate so e.g.
+  // every Instagram profile doesn't collapse to the same blush/coral.
   const platforms = new Set(evidence.platforms);
   const textThin = textLen < 40;
   const platformHints: Array<{
@@ -539,19 +540,21 @@ export function inferTasteColour(
     colourId: string;
     w: number;
   }> = [
-    { platform: "tiktok", colourId: "violet", w: 0.9 },
-    { platform: "tiktok", colourId: "magenta", w: 0.45 },
-    { platform: "linkedin", colourId: "navy", w: 0.85 },
-    { platform: "linkedin", colourId: "ink", w: 0.55 },
-    { platform: "instagram", colourId: "blush", w: 0.85 },
-    { platform: "instagram", colourId: "coral", w: 0.55 },
-    { platform: "instagram", colourId: "ember", w: 0.4 },
-    { platform: "youtube", colourId: "crimson", w: 0.7 },
-    { platform: "youtube", colourId: "ink", w: 0.45 },
-    { platform: "x", colourId: "sky", w: 0.65 },
-    { platform: "x", colourId: "charcoal", w: 0.4 },
+    { platform: "tiktok", colourId: "violet", w: 0.12 },
+    { platform: "tiktok", colourId: "magenta", w: 0.06 },
+    { platform: "linkedin", colourId: "navy", w: 0.1 },
+    { platform: "linkedin", colourId: "ink", w: 0.06 },
+    { platform: "instagram", colourId: "blush", w: 0.08 },
+    { platform: "instagram", colourId: "coral", w: 0.05 },
+    { platform: "instagram", colourId: "ember", w: 0.04 },
+    { platform: "youtube", colourId: "crimson", w: 0.08 },
+    { platform: "youtube", colourId: "ink", w: 0.05 },
+    { platform: "x", colourId: "sky", w: 0.07 },
+    { platform: "x", colourId: "charcoal", w: 0.04 },
   ];
-  const platformScale = textThin ? 1.35 : 0.45;
+  // Thin text still gets a slight platform nudge so a first empty link can tint;
+  // rich text almost ignores platform.
+  const platformScale = textThin ? 0.55 : 0.15;
   for (const h of platformHints) {
     if (platforms.has(h.platform) && rawScores[h.colourId] !== undefined) {
       rawScores[h.colourId] =
