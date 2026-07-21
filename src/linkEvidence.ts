@@ -19,6 +19,32 @@ export type LinkContentKind =
   | "unknown";
 
 /**
+ * Compact visual summary derived from a public image (OG / profile / post).
+ * Produced by the private app (decode pixels → stats). The open algorithm
+ * never sees image bytes — only this explainable structure.
+ */
+export interface ImagePaletteSignal {
+  /** Dominant swatches as #RRGGBB (typically 3–6). */
+  swatches: string[];
+  /** Mean chromatic hue in degrees [0, 360). */
+  hue: number;
+  /** Mean saturation 0–1 among chromatic pixels. */
+  saturation: number;
+  /** Mean lightness 0–1. */
+  lightness: number;
+  /** Warmth −1 (cool) … +1 (warm). */
+  warmth: number;
+  /** Overall chroma / punch 0–1. */
+  vibrance: number;
+  /** Share of near-neutral pixels 0–1. */
+  neutralShare: number;
+  /** Soft labels for UI / audit, e.g. warm, muted, dark. */
+  tags: string[];
+  /** 0–1 how trustworthy this extraction is. */
+  confidence: number;
+}
+
+/**
  * Normalized snapshot of everything we extracted from a pasted link.
  * Produced by the private app (fetch + HTML parse); consumed by open analyze helpers.
  */
@@ -34,6 +60,8 @@ export interface LinkSnapshot {
   title?: string;
   description?: string;
   imageUrl?: string;
+  /** Palette / tone summary from imageUrl (private app). */
+  imageSignals?: ImagePaletteSignal;
   siteName?: string;
   author?: string;
   /** Free-text signals collected for later taste factors. */
@@ -118,7 +146,8 @@ export function linkSnapshotRichness(snap: LinkSnapshot): number {
   if (snap.handle) score += 0.15;
   if (snap.title) score += 0.15;
   if (snap.description) score += 0.25;
-  if (snap.imageUrl) score += 0.1;
+  if (snap.imageUrl) score += 0.08;
+  if (snap.imageSignals && snap.imageSignals.confidence > 0.2) score += 0.18;
   if (snap.textSignals.length > 0) score += 0.2;
   if (snap.access === "public_meta") score += 0.15;
   else if (snap.access === "partial") score += 0.05;

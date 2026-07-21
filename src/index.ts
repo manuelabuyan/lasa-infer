@@ -11,6 +11,7 @@ export {
   evidenceFromLinkSnapshots,
   linkSnapshotRichness,
   platformFromHost,
+  type ImagePaletteSignal,
   type LinkAccess,
   type LinkContentKind,
   type LinkSnapshot,

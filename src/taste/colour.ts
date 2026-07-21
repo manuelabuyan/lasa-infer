@@ -9,10 +9,15 @@
  * - Soft influence from taste axes
  * - Soft platform hints (near-zero; text/topics dominate)
  * - Strip platform chrome (e.g. IG "photos and videos" boilerplate)
+ * - Image palette signals (swatches / warmth / vibrance) as second channel
  * - Change after first link; low confidence → lighter/softer colour
  */
 
-import { linkSnapshotRichness, type LinkSnapshot } from "../linkEvidence.js";
+import {
+  linkSnapshotRichness,
+  type ImagePaletteSignal,
+  type LinkSnapshot,
+} from "../linkEvidence.js";
 import type { Evidence, PlatformId } from "../types.js";
 import { collectText, topicHits } from "./lexicons.js";
 import type { DataConfidence, TasteAxisResult, TasteScoreContext } from "./types.js";
@@ -558,11 +563,22 @@ export function inferTasteColour(
     rawScores[def.id] = s;
   }
 
+  const textThin = textLen < 40;
+
+  // --- Image palette channel (from private app, not raw pixels) ---
+  // Strong when text is thin; still contributes when bios are rich.
+  const imageSignals = snapshots
+    .map((s) => s.imageSignals)
+    .filter((s): s is ImagePaletteSignal => Boolean(s && s.confidence > 0.15));
+  let imageBoost = 0;
+  if (imageSignals.length > 0) {
+    imageBoost = applyImagePaletteToScores(rawScores, imageSignals, textThin);
+  }
+
   // Platform hints — reserved micro-bias only. Text/topics own the colour.
   // Softmax of tiny platform crumbs used to paint every empty IG the same
   // blush/coral; if there is no real colour text, stay near slate instead.
   const platforms = new Set(evidence.platforms);
-  const textThin = textLen < 40;
   const textOnlyMax = Math.max(
     0,
     ...Object.entries(rawScores)
@@ -679,15 +695,25 @@ export function inferTasteColour(
   const blended = mixRgb(blendParts);
   const boldHex = rgbToHex(blended.r, blended.g, blended.b);
 
-  // Confidence: data conf + text + decisiveness of blend
+  // Confidence: data conf + text + image + decisiveness of blend
   const dataC = options.dataConfidence?.score ?? clamp01(totalWeight / 3);
   const confFromText =
     textLen < 8 ? 0.25 : textLen < 40 ? 0.45 : textLen < 120 ? 0.65 : 0.85;
+  const confFromImage =
+    imageSignals.length === 0
+      ? 0
+      : clamp01(
+          imageSignals.reduce((s, i) => s + i.confidence, 0) /
+            imageSignals.length,
+        );
   const top1 = blendMeta[0]?.weight ?? 0;
   const top2 = blendMeta[1]?.weight ?? 0;
   const decisiveness = clamp01((top1 - top2) * 2 + top1 * 0.3);
   const confidence = clamp01(
-    0.35 * dataC + 0.35 * confFromText + 0.3 * decisiveness,
+    0.3 * dataC +
+      0.3 * confFromText +
+      0.15 * confFromImage +
+      0.25 * decisiveness,
   );
 
   const display = applyConfidenceBoldness(blended, confidence);
@@ -705,12 +731,20 @@ export function inferTasteColour(
     .map((b) => `${b.label} ${Math.round(b.weight * 100)}%`)
     .join(", ");
 
+  const imageTags = [
+    ...new Set(imageSignals.flatMap((i) => i.tags).slice(0, 4)),
+  ];
+  const imageNote =
+    imageSignals.length > 0
+      ? ` · image${imageTags.length ? ` ${imageTags.join("/")}` : ""}`
+      : "";
+
   const summary =
-    primaryId === "slate" && confidence < 0.35
+    primaryId === "slate" && confidence < 0.35 && imageBoost < 0.2
       ? "Soft slate — still gathering public signal."
       : `${primary.label}${blendLabels && blendMeta.length > 1 ? ` (blend: ${blendLabels})` : ""}${
           topTopics.length ? ` · ${topTopics.join(", ")}` : ""
-        }.`;
+        }${imageNote}.`;
 
   return {
     id: primaryId,
@@ -730,4 +764,184 @@ export function inferTasteColourFromContext(
   options: InferColourOptions = {},
 ): TasteColourResult {
   return inferTasteColour(ctx.evidence, ctx.snapshots, options);
+}
+
+/**
+ * Map image palette stats → colour raw scores.
+ * Returns a rough boost magnitude for confidence / summary.
+ */
+function applyImagePaletteToScores(
+  rawScores: Record<string, number>,
+  images: ImagePaletteSignal[],
+  textThin: boolean,
+): number {
+  // Text still wins when rich; images matter a lot when bios are thin.
+  const scale = textThin ? 1.35 : 0.7;
+  let totalBoost = 0;
+
+  for (const img of images) {
+    const conf = clamp01(img.confidence);
+    const base = scale * conf;
+
+    // Nearest palette colours from swatches (dominant image colours)
+    for (let i = 0; i < img.swatches.length; i++) {
+      const hex = img.swatches[i]!;
+      const rankW = 1 - i * 0.12;
+      const near = nearestColourIds(hex, 3);
+      for (const { id, closeness } of near) {
+        if (id === "slate") continue;
+        const add = base * rankW * closeness * 1.1;
+        rawScores[id] = (rawScores[id] ?? 0) + add;
+        totalBoost += add;
+      }
+    }
+
+    // Warmth / cool axis
+    const w = img.warmth; // −1…+1
+    if (w > 0.15) {
+      const t = base * w;
+      rawScores.ember = (rawScores.ember ?? 0) + t * 0.55;
+      rawScores.coral = (rawScores.coral ?? 0) + t * 0.4;
+      rawScores.honey = (rawScores.honey ?? 0) + t * 0.3;
+      rawScores.copper = (rawScores.copper ?? 0) + t * 0.35;
+      rawScores.gold = (rawScores.gold ?? 0) + t * 0.25;
+      totalBoost += t;
+    } else if (w < -0.15) {
+      const t = base * -w;
+      rawScores.ink = (rawScores.ink ?? 0) + t * 0.5;
+      rawScores.ice = (rawScores.ice ?? 0) + t * 0.4;
+      rawScores.navy = (rawScores.navy ?? 0) + t * 0.45;
+      rawScores.aqua = (rawScores.aqua ?? 0) + t * 0.3;
+      rawScores.sky = (rawScores.sky ?? 0) + t * 0.25;
+      totalBoost += t;
+    }
+
+    // Lightness / darkness
+    if (img.lightness < 0.32) {
+      const t = base * (0.32 - img.lightness) * 2;
+      rawScores.charcoal = (rawScores.charcoal ?? 0) + t * 0.5;
+      rawScores.espresso = (rawScores.espresso ?? 0) + t * 0.35;
+      rawScores.navy = (rawScores.navy ?? 0) + t * 0.25;
+      totalBoost += t * 0.5;
+    } else if (img.lightness > 0.72) {
+      const t = base * (img.lightness - 0.72) * 2;
+      rawScores.sand = (rawScores.sand ?? 0) + t * 0.35;
+      rawScores.ice = (rawScores.ice ?? 0) + t * 0.3;
+      rawScores.lavender = (rawScores.lavender ?? 0) + t * 0.25;
+      totalBoost += t * 0.4;
+    }
+
+    // Vibrance vs muted
+    if (img.vibrance > 0.55) {
+      const t = base * (img.vibrance - 0.4);
+      rawScores.magenta = (rawScores.magenta ?? 0) + t * 0.3;
+      rawScores.crimson = (rawScores.crimson ?? 0) + t * 0.25;
+      rawScores.violet = (rawScores.violet ?? 0) + t * 0.2;
+      totalBoost += t * 0.4;
+    } else if (img.vibrance < 0.28 && img.neutralShare > 0.45) {
+      const t = base * 0.5;
+      rawScores.sage = (rawScores.sage ?? 0) + t * 0.35;
+      rawScores.sand = (rawScores.sand ?? 0) + t * 0.3;
+      rawScores.charcoal = (rawScores.charcoal ?? 0) + t * 0.25;
+      totalBoost += t * 0.35;
+    }
+
+    // Hue family soft pull (in addition to swatch match)
+    const huePull = hueFamilyColourBoosts(img.hue, img.saturation);
+    for (const [id, wHue] of Object.entries(huePull)) {
+      const add = base * wHue * 0.65;
+      rawScores[id] = (rawScores[id] ?? 0) + add;
+      totalBoost += add;
+    }
+  }
+
+  return totalBoost;
+}
+
+function parseHex(hex: string): { r: number; g: number; b: number } | null {
+  const h = hex.replace("#", "").trim();
+  if (h.length !== 6) return null;
+  const n = Number.parseInt(h, 16);
+  if (Number.isNaN(n)) return null;
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+function colourDistance(
+  a: { r: number; g: number; b: number },
+  b: { r: number; g: number; b: number },
+): number {
+  const dr = a.r - b.r;
+  const dg = a.g - b.g;
+  const db = a.b - b.b;
+  return Math.sqrt(dr * dr + dg * dg + db * db);
+}
+
+/** Closest palette colours to a swatch hex. */
+function nearestColourIds(
+  hex: string,
+  k: number,
+): Array<{ id: string; closeness: number }> {
+  const rgb = parseHex(hex);
+  if (!rgb) return [];
+  const ranked = listTasteColours()
+    .filter((c) => c.id !== "slate")
+    .map((c) => {
+      const d = colourDistance(rgb, parseRgb(c.rgb));
+      // 0 distance → 1; ~180+ → ~0
+      const closeness = clamp01(1 - d / 180);
+      return { id: c.id, closeness, d };
+    })
+    .sort((a, b) => a.d - b.d)
+    .slice(0, k)
+    .filter((x) => x.closeness > 0.2);
+  return ranked.map(({ id, closeness }) => ({ id, closeness }));
+}
+
+/** Soft boosts from mean hue (degrees) when saturation is meaningful. */
+function hueFamilyColourBoosts(
+  hue: number,
+  saturation: number,
+): Record<string, number> {
+  if (saturation < 0.12) return {};
+  const h = ((hue % 360) + 360) % 360;
+  const s = clamp01(saturation);
+  const out: Record<string, number> = {};
+  const add = (id: string, w: number) => {
+    out[id] = (out[id] ?? 0) + w * s;
+  };
+
+  if (h < 20 || h >= 345) {
+    add("crimson", 0.7);
+    add("rose", 0.45);
+    add("blush", 0.35);
+  } else if (h < 45) {
+    add("ember", 0.75);
+    add("coral", 0.5);
+    add("copper", 0.4);
+  } else if (h < 70) {
+    add("honey", 0.7);
+    add("gold", 0.55);
+    add("sand", 0.35);
+  } else if (h < 150) {
+    add("moss", 0.55);
+    add("lime", 0.45);
+    add("forest", 0.4);
+    add("sage", 0.3);
+  } else if (h < 195) {
+    add("teal", 0.65);
+    add("aqua", 0.55);
+  } else if (h < 250) {
+    add("sky", 0.5);
+    add("ink", 0.55);
+    add("ice", 0.35);
+  } else if (h < 290) {
+    add("navy", 0.4);
+    add("violet", 0.65);
+    add("lavender", 0.4);
+  } else {
+    add("plum", 0.5);
+    add("magenta", 0.6);
+    add("violet", 0.4);
+  }
+  return out;
 }

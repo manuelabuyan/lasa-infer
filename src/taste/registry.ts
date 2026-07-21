@@ -83,7 +83,7 @@ export const TASTE_AXES: readonly TasteAxisDef[] = [
     id: "visual_consistency",
     label: "Visual consistency",
     description:
-      "Reserved: palette and composition coherence across images (needs vision pipeline).",
+      "Palette coherence across linked images. MVP: per-link imageSignals already feed person colour; multi-image consistency scoring still stubbed.",
     status: "stub",
     version: 1,
     order: 100,

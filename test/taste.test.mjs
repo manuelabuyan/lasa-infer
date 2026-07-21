@@ -114,3 +114,66 @@ test("low vs high data confidence", () => {
   assert.ok(text.includes("data confidence"));
   assert.ok(text.includes("colour:"));
 });
+
+test("image palette can tint colour without bio text", () => {
+  const warm = scoreTaste({
+    snapshots: [
+      {
+        url: "https://instagram.com/warmshot",
+        platform: "instagram",
+        contentKind: "profile",
+        access: "public_meta",
+        title: "User",
+        textSignals: ["User"],
+        notes: [],
+        fetchedAt: new Date().toISOString(),
+        handle: "warmshot",
+        imageSignals: {
+          swatches: ["#D25C3A", "#C49440", "#A86040"],
+          hue: 28,
+          saturation: 0.62,
+          lightness: 0.48,
+          warmth: 0.75,
+          vibrance: 0.58,
+          neutralShare: 0.18,
+          tags: ["warm", "oranges", "vivid"],
+          confidence: 0.85,
+        },
+      },
+    ],
+  });
+  const cool = scoreTaste({
+    snapshots: [
+      {
+        url: "https://instagram.com/coolshot",
+        platform: "instagram",
+        contentKind: "profile",
+        access: "public_meta",
+        title: "User",
+        textSignals: ["User"],
+        notes: [],
+        fetchedAt: new Date().toISOString(),
+        handle: "coolshot",
+        imageSignals: {
+          swatches: ["#3E62A8", "#40AAB4", "#A0BCD6"],
+          hue: 210,
+          saturation: 0.45,
+          lightness: 0.5,
+          warmth: -0.7,
+          vibrance: 0.42,
+          neutralShare: 0.22,
+          tags: ["cool", "blues"],
+          confidence: 0.85,
+        },
+      },
+    ],
+  });
+
+  assert.notEqual(warm.colour.id, "slate");
+  assert.notEqual(cool.colour.id, "slate");
+  assert.notEqual(warm.colour.id, cool.colour.id);
+  assert.ok(
+    warm.colour.summary.includes("image"),
+    `expected image note in summary: ${warm.colour.summary}`,
+  );
+});
