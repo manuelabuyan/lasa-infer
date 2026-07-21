@@ -570,12 +570,17 @@ export function inferTasteColour(
   const imageSignals = snapshots
     .map((s) => s.imageSignals)
     .filter((s): s is ImagePaletteSignal => Boolean(s && s.confidence > 0.15));
-  let imageBoost = 0;
   if (imageSignals.length > 0) {
-    imageBoost = applyImagePaletteToScores(rawScores, imageSignals, textThin);
+    applyImagePaletteToScores(rawScores, imageSignals, textThin);
   }
 
-  // Taste axis influence (when provided)
+  // Real colour evidence from text + image only (before soft axis nudges).
+  const contentMax = maxScoreExcludingSlate(rawScores);
+
+  // Taste axes may nudge colour only when we already have content/image signal.
+  // Mid-range axis defaults (e.g. discovery ≈ 0.5) used to inject tiny violet/
+  // magenta scores, pass the weak-signal gate, flatten softmax, and leave the UI
+  // stuck on slate "still gathering public signal" forever.
   const axisScore = (id: string) =>
     options.axes?.find((a) => a.axisId === id && a.score !== null)?.score ?? 0;
 
@@ -585,37 +590,49 @@ export function inferTasteColour(
   const curation = axisScore("curation");
   const distinct = axisScore("distinctiveness");
 
-  rawScores.ember = (rawScores.ember ?? 0) + craft * 0.35 + depth * 0.2;
-  rawScores.copper = (rawScores.copper ?? 0) + craft * 0.4;
-  rawScores.violet = (rawScores.violet ?? 0) + discovery * 0.35;
-  rawScores.magenta = (rawScores.magenta ?? 0) + discovery * 0.2 + distinct * 0.15;
-  rawScores.ink = (rawScores.ink ?? 0) + depth * 0.15 + curation * 0.1;
-  rawScores.navy = (rawScores.navy ?? 0) + depth * 0.25;
-  rawScores.charcoal = (rawScores.charcoal ?? 0) + curation * 0.15 + distinct * 0.1;
-  rawScores.blush = (rawScores.blush ?? 0) + curation * 0.1;
-  rawScores.gold = (rawScores.gold ?? 0) + depth * 0.1;
+  // Only strong axis values pull; mid-band is treated as neutral (0).
+  const axisPull = (score: number) => {
+    if (score < 0.45) return 0;
+    return score - 0.35; // 0.45 → 0.10 … 1.0 → 0.65
+  };
+  // No content/image → axes must not invent a colour (scale 0).
+  const axisScale = contentMax >= 0.35 ? 1 : contentMax >= 0.15 ? 0.5 : 0;
 
-  // Content/image only — platform id never contributes to colour scores.
-  const maxNonSlate = Math.max(
-    0,
-    ...Object.entries(rawScores)
-      .filter(([id]) => id !== "slate")
-      .map(([, v]) => v),
-  );
+  if (axisScale > 0) {
+    const c = axisPull(craft) * axisScale;
+    const d = axisPull(depth) * axisScale;
+    const disc = axisPull(discovery) * axisScale;
+    const cur = axisPull(curation) * axisScale;
+    const dist = axisPull(distinct) * axisScale;
 
-  // Weak / empty signal → slate (no platform-type fallback tint)
-  const signalTooWeak = maxNonSlate < 0.12;
+    rawScores.ember = (rawScores.ember ?? 0) + c * 0.35 + d * 0.2;
+    rawScores.copper = (rawScores.copper ?? 0) + c * 0.4;
+    rawScores.violet = (rawScores.violet ?? 0) + disc * 0.35;
+    rawScores.magenta =
+      (rawScores.magenta ?? 0) + disc * 0.2 + dist * 0.15;
+    rawScores.ink = (rawScores.ink ?? 0) + d * 0.15 + cur * 0.1;
+    rawScores.navy = (rawScores.navy ?? 0) + d * 0.25;
+    rawScores.charcoal =
+      (rawScores.charcoal ?? 0) + cur * 0.15 + dist * 0.1;
+    rawScores.blush = (rawScores.blush ?? 0) + cur * 0.1;
+    rawScores.gold = (rawScores.gold ?? 0) + d * 0.1;
+  }
+
+  const maxNonSlate = maxScoreExcludingSlate(rawScores);
+
+  // Gate on content/image — not on axis crumbs
+  const signalTooWeak = contentMax < 0.2;
 
   let weights: Record<string, number>;
   if (signalTooWeak) {
     weights = { slate: 1 };
   } else {
     // Prefer sharper colour assignment (lower temperature)
-    weights = softmax(rawScores, textThin ? 0.55 : 0.7);
-    // Small slate floor only when signal is weak
+    weights = softmax(rawScores, textThin ? 0.5 : 0.65);
+    // Small slate floor only when signal is weak — not enough to beat a real hit
     const slateFloor =
-      maxNonSlate < 0.5 ? 0.12 : maxNonSlate < 1.5 ? 0.05 : 0.02;
-    weights.slate = (weights.slate ?? 0) * 0.5 + slateFloor;
+      maxNonSlate < 0.8 ? 0.06 : maxNonSlate < 2 ? 0.03 : 0.015;
+    weights.slate = (weights.slate ?? 0) * 0.35 + slateFloor;
     const sum = Object.values(weights).reduce((a, b) => a + b, 0) || 1;
     for (const id of Object.keys(weights)) weights[id]! /= sum;
   }
@@ -697,12 +714,20 @@ export function inferTasteColour(
       ? ` · image${imageTags.length ? ` ${imageTags.join("/")}` : ""}`
       : "";
 
-  const summary =
-    primaryId === "slate" && confidence < 0.35 && imageBoost < 0.2
-      ? "Soft slate — still gathering public signal."
-      : `${primary.label}${blendLabels && blendMeta.length > 1 ? ` (blend: ${blendLabels})` : ""}${
-          topTopics.length ? ` · ${topTopics.join(", ")}` : ""
-        }${imageNote}.`;
+  const summary = (() => {
+    if (primaryId === "slate" && signalTooWeak) {
+      if (snapshots.length === 0) {
+        return "Soft slate — add a public profile to begin.";
+      }
+      if (imageSignals.length === 0 && textLen < 24) {
+        return "Soft slate — little public text or image colour yet.";
+      }
+      return "Soft slate — mixed or thin public signal so far.";
+    }
+    return `${primary.label}${
+      blendLabels && blendMeta.length > 1 ? ` (blend: ${blendLabels})` : ""
+    }${topTopics.length ? ` · ${topTopics.join(", ")}` : ""}${imageNote}.`;
+  })();
 
   return {
     id: primaryId,
@@ -722,6 +747,15 @@ export function inferTasteColourFromContext(
   options: InferColourOptions = {},
 ): TasteColourResult {
   return inferTasteColour(ctx.evidence, ctx.snapshots, options);
+}
+
+function maxScoreExcludingSlate(scores: Record<string, number>): number {
+  return Math.max(
+    0,
+    ...Object.entries(scores)
+      .filter(([id]) => id !== "slate")
+      .map(([, v]) => v),
+  );
 }
 
 /**

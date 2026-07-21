@@ -235,7 +235,23 @@ export function topicHits(text: string): Map<string, number> {
   for (const [topic, words] of Object.entries(TOPIC_BUCKETS)) {
     let n = 0;
     for (const w of words) {
-      if (text.includes(w.toLowerCase())) n += 1;
+      const term = w.toLowerCase();
+      if (!term) continue;
+      // Multi-word: substring. Single word: boundary match so e.g. "graphic"
+      // does not fire inside "Geographic".
+      if (term.includes(" ")) {
+        if (text.includes(term)) n += 1;
+      } else {
+        try {
+          const re = new RegExp(
+            `(?:^|[^a-z0-9])${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[^a-z0-9]|$)`,
+            "i",
+          );
+          if (re.test(text)) n += 1;
+        } catch {
+          if (text.includes(term)) n += 1;
+        }
+      }
     }
     if (n > 0) map.set(topic, n);
   }
