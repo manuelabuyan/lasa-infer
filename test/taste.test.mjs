@@ -83,8 +83,32 @@ test("low vs high data confidence", () => {
 
   assert.ok(high.colour?.id);
   assert.ok(high.colour.rgb.includes(","));
-  // Film/photo language should lean ember (or at least not fail)
-  assert.ok(["ember", "violet", "gold", "ink", "moss", "blush", "slate"].includes(high.colour.id));
+  assert.ok(high.colour.blend?.length >= 1);
+  // Film/photo language should not be pure error
+  assert.ok(typeof high.colour.confidence === "number");
+
+  // First thin public-ish link should still produce a colour (not crash)
+  const first = scoreTaste({
+    snapshots: [
+      {
+        url: "https://instagram.com/filmer",
+        platform: "instagram",
+        contentKind: "profile",
+        access: "public_meta",
+        title: "35mm film photographer",
+        description: "Analog darkroom process",
+        textSignals: ["35mm film photographer", "Analog darkroom process"],
+        notes: [],
+        fetchedAt: new Date().toISOString(),
+        handle: "filmer",
+      },
+    ],
+  });
+  assert.ok(first.colour.id);
+  assert.ok(first.colour.confidence > 0);
+
+  // Higher conf should generally be bolder (not washed to soft slate grey mean)
+  assert.ok(high.colour.confidence >= first.colour.confidence - 0.05);
 
   const text = formatTasteProfile(high);
   assert.ok(text.includes("data confidence"));

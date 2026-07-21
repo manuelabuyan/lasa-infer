@@ -31,6 +31,7 @@ export {
   listTasteColours,
   getTasteColour,
   inferTasteColour,
+  type InferColourOptions,
   type TasteColourDef,
   type TasteColourResult,
 } from "./colour.js";

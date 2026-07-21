@@ -131,7 +131,10 @@ export function scoreTaste(options: ScoreTasteOptions = {}): TasteProfile {
     axesOut.push(axisResult);
   }
 
-  const colour = inferTasteColour(evidence, snapshots);
+const colour = inferTasteColour(evidence, snapshots, {
+    axes: axesOut,
+    dataConfidence,
+  });
 
   return {
     inferVersion: INFER_VERSION,

@@ -32,6 +32,7 @@ export {
   listTasteColours,
   getTasteColour,
   inferTasteColour,
+  type InferColourOptions,
   type ScoreTasteOptions,
   type DataConfidence,
   type TasteAxisDef,
