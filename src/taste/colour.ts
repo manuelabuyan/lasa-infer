@@ -7,7 +7,8 @@
  * - Weight evidence by access / richness
  * - Word-boundary token matching
  * - Soft influence from taste axes
- * - Soft platform hints (low weight)
+ * - Soft platform hints (near-zero; text/topics dominate)
+ * - Strip platform chrome (e.g. IG "photos and videos" boilerplate)
  * - Change after first link; low confidence → lighter/softer colour
  */
 
@@ -465,6 +466,30 @@ export type InferColourOptions = {
 };
 
 /**
+ * Strip platform chrome that would otherwise fake a colour signal.
+ * e.g. every IG profile title ends with "Instagram photos and videos"
+ * which used to always hit the photo → ember path.
+ */
+function stripPlatformChrome(text: string): string {
+  return text
+    .replace(/\binstagram\s+photos?\s+and\s+videos?\b/gi, " ")
+    .replace(/\bphotos?\s+and\s+videos?\s+from\b/gi, " ")
+    .replace(/\bsee\s+instagram\b/gi, " ")
+    .replace(/\bon\s+instagram\b/gi, " ")
+    .replace(/\b•\s*instagram\b/gi, " ")
+    .replace(/\binstagram\b/gi, " ")
+    .replace(/\btiktok\s*[-–—]?\s*make\s+your\s+day\b/gi, " ")
+    .replace(/\bon\s+tiktok\b/gi, " ")
+    .replace(/\btiktok\b/gi, " ")
+    .replace(/\blinkedin\b/gi, " ")
+    .replace(/\byoutube\b/gi, " ")
+    .replace(/\btwitter\b/gi, " ")
+    .replace(/\bx\.com\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
  * Infer person colour from evidence + link snapshots (+ optional taste axes).
  * Pure rules — no network.
  */
@@ -481,15 +506,17 @@ export function inferTasteColour(
     for (const snap of snapshots) {
       const w =
         accessWeight(snap.access) * (0.4 + 0.6 * linkSnapshotRichness(snap));
-      const chunk = [
-        snap.handle,
-        snap.title,
-        snap.description,
-        snap.author,
-        ...snap.textSignals,
-      ]
-        .filter(Boolean)
-        .join(" ");
+      const chunk = stripPlatformChrome(
+        [
+          snap.handle,
+          snap.title,
+          snap.description,
+          snap.author,
+          ...snap.textSignals,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
       if (!chunk.trim()) continue;
       // Repeat text proportionally to weight (cheap weighted bag-of-words)
       const reps = Math.max(1, Math.round(w * 4));
@@ -499,7 +526,7 @@ export function inferTasteColour(
   }
 
   // Also fold generic evidence text once
-  weightedText += ` ${collectText(evidence)}`;
+  weightedText += ` ${stripPlatformChrome(collectText(evidence))}`;
   const text = weightedText.toLowerCase();
   const textLen = text.replace(/\s+/g, " ").trim().length;
 
@@ -531,30 +558,37 @@ export function inferTasteColour(
     rawScores[def.id] = s;
   }
 
-  // Platform hints — very light only. Text/topics should dominate so e.g.
-  // every Instagram profile doesn't collapse to the same blush/coral.
+  // Platform hints — reserved micro-bias only. Text/topics own the colour.
+  // Softmax of tiny platform crumbs used to paint every empty IG the same
+  // blush/coral; if there is no real colour text, stay near slate instead.
   const platforms = new Set(evidence.platforms);
   const textThin = textLen < 40;
+  const textOnlyMax = Math.max(
+    0,
+    ...Object.entries(rawScores)
+      .filter(([id]) => id !== "slate")
+      .map(([, v]) => v),
+  );
   const platformHints: Array<{
     platform: PlatformId;
     colourId: string;
     w: number;
   }> = [
-    { platform: "tiktok", colourId: "violet", w: 0.12 },
-    { platform: "tiktok", colourId: "magenta", w: 0.06 },
-    { platform: "linkedin", colourId: "navy", w: 0.1 },
-    { platform: "linkedin", colourId: "ink", w: 0.06 },
-    { platform: "instagram", colourId: "blush", w: 0.08 },
-    { platform: "instagram", colourId: "coral", w: 0.05 },
-    { platform: "instagram", colourId: "ember", w: 0.04 },
-    { platform: "youtube", colourId: "crimson", w: 0.08 },
-    { platform: "youtube", colourId: "ink", w: 0.05 },
-    { platform: "x", colourId: "sky", w: 0.07 },
-    { platform: "x", colourId: "charcoal", w: 0.04 },
+    { platform: "tiktok", colourId: "violet", w: 0.03 },
+    { platform: "tiktok", colourId: "magenta", w: 0.015 },
+    { platform: "linkedin", colourId: "navy", w: 0.03 },
+    { platform: "linkedin", colourId: "ink", w: 0.015 },
+    { platform: "instagram", colourId: "blush", w: 0.02 },
+    { platform: "instagram", colourId: "coral", w: 0.01 },
+    { platform: "instagram", colourId: "ember", w: 0.008 },
+    { platform: "youtube", colourId: "crimson", w: 0.025 },
+    { platform: "youtube", colourId: "ink", w: 0.012 },
+    { platform: "x", colourId: "sky", w: 0.02 },
+    { platform: "x", colourId: "charcoal", w: 0.01 },
   ];
-  // Thin text still gets a slight platform nudge so a first empty link can tint;
-  // rich text almost ignores platform.
-  const platformScale = textThin ? 0.55 : 0.15;
+  // Only when colour text is essentially empty — and keep it tiny so softmax
+  // does not turn platform crumbs into a fixed identity colour.
+  const platformScale = textOnlyMax >= 0.25 ? 0 : textThin ? 0.06 : 0.02;
   for (const h of platformHints) {
     if (platforms.has(h.platform) && rawScores[h.colourId] !== undefined) {
       rawScores[h.colourId] =
@@ -594,8 +628,12 @@ export function inferTasteColour(
   const useSlateOnly =
     snapshots.length === 0 && platforms.size === 0 && maxNonSlate < 0.05;
 
+  // Platform/boilerplate crumbs (maxNonSlate ≪ 0.1) must not win via softmax —
+  // that made every empty Instagram profile the same warm tint.
+  const signalTooWeak = maxNonSlate < 0.12;
+
   let weights: Record<string, number>;
-  if (useSlateOnly) {
+  if (useSlateOnly || signalTooWeak) {
     weights = { slate: 1 };
   } else {
     // Prefer sharper colour assignment (lower temperature)
