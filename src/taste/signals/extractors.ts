@@ -40,18 +40,13 @@ function textConfidence(text: string): number {
 }
 
 const extractors: Record<string, TasteSignalExtractor> = {
-  platform_count: (ctx) => {
-    const n = new Set(ctx.evidence.platforms).size;
-    const score = clamp01(n / 3);
-    return {
-      score,
-      confidence: n > 0 ? 0.9 : 0.1,
-      detail: `${n} platform(s)`,
-      factors: [
-        factor("platform_count", score, ctx.evidence.platforms.map((p) => `platform:${p}`), undefined, n),
-      ],
-    };
-  },
+  // Disabled in registry — kept so listExtractorIds stays complete if re-enabled.
+  platform_count: () => ({
+    score: 0,
+    confidence: 0,
+    detail: "platform identity/count does not influence taste",
+    factors: [],
+  }),
 
   topic_diversity: (ctx) => {
     const text = collectText(ctx.evidence);
@@ -153,13 +148,12 @@ const extractors: Record<string, TasteSignalExtractor> = {
   rare_topic_mix: (ctx) => {
     const text = collectText(ctx.evidence);
     const topics = [...topicHits(text).keys()];
-    const platforms = new Set(ctx.evidence.platforms).size;
-    // Unusual: many topics or uncommon pairs — simple: topic count + platform diversity
-    const score = clamp01(topics.length / 4 + (platforms >= 2 ? 0.2 : 0));
+    // Content-only: unusual mix from topic count (no platform diversity bonus)
+    const score = clamp01(topics.length / 4);
     return {
       score,
       confidence: textConfidence(text),
-      detail: `mix size ${topics.length} topics, ${platforms} platforms`,
+      detail: `mix size ${topics.length} topics`,
       factors: [
         factor("rare_topic_mix", score, topics.map((t) => `topic:${t}`), undefined, topics.length),
       ],
@@ -167,43 +161,42 @@ const extractors: Record<string, TasteSignalExtractor> = {
   },
 
   cross_platform_topics: (ctx) => {
-    const platforms = [...new Set(ctx.evidence.platforms)];
-    if (platforms.length < 2) {
-      return {
-        score: 0.2,
-        confidence: 0.35,
-        detail: "need 2+ platforms for cross-platform coherence",
-        factors: [factor("cross_platform_topics", 0.2, platforms.map((p) => `platform:${p}`))],
-      };
-    }
-    // Per-platform topic sets from bios/posts tagged by platform
-    const byPlatform = new Map<string, Set<string>>();
+    // Topic agreement across separate text items — ignores host/platform type.
+    const itemTopics: Set<string>[] = [];
     for (const b of ctx.evidence.bios ?? []) {
       const t = topicHits(b.text.toLowerCase());
-      const set = byPlatform.get(b.platform) ?? new Set();
-      for (const k of t.keys()) set.add(k);
-      byPlatform.set(b.platform, set);
+      if (t.size > 0) itemTopics.push(new Set(t.keys()));
     }
     for (const p of ctx.evidence.posts ?? []) {
       const t = topicHits((p.caption ?? "").toLowerCase());
-      const set = byPlatform.get(p.platform) ?? new Set();
-      for (const k of t.keys()) set.add(k);
-      byPlatform.set(p.platform, set);
+      if (t.size > 0) itemTopics.push(new Set(t.keys()));
     }
-    const sets = [...byPlatform.values()];
-    let overlap = 0;
-    if (sets.length >= 2) {
-      const [a, ...rest] = sets;
-      for (const topic of a ?? []) {
-        if (rest.every((s) => s.has(topic))) overlap += 1;
+    if (itemTopics.length < 2) {
+      return {
+        score: 0.2,
+        confidence: 0.35,
+        detail: "need 2+ text items for cross-source coherence",
+        factors: [factor("cross_platform_topics", 0.2, ["items:lt2"])],
+      };
+    }
+    const topicCounts = new Map<string, number>();
+    for (const set of itemTopics) {
+      for (const topic of set) {
+        topicCounts.set(topic, (topicCounts.get(topic) ?? 0) + 1);
       }
     }
+    let overlap = 0;
+    for (const c of topicCounts.values()) if (c >= 2) overlap += 1;
     const score = clamp01(overlap / 2 + (overlap > 0 ? 0.3 : 0));
     return {
       score,
       confidence: 0.6,
-      detail: overlap ? `${overlap} shared topic(s) across platforms` : "no shared topics yet",
-      factors: [factor("cross_platform_topics", score, [`overlap:${overlap}`], undefined, overlap)],
+      detail: overlap
+        ? `${overlap} topic(s) shared across text items`
+        : "no shared topics across items yet",
+      factors: [
+        factor("cross_platform_topics", score, [`overlap:${overlap}`], undefined, overlap),
+      ],
     };
   },
 
@@ -314,11 +307,10 @@ const extractors: Record<string, TasteSignalExtractor> = {
   },
 
   t_shape_combo: (ctx) => {
-    // Derived from same primitives as depth + breadth without recursive scoring.
+    // Derived from content depth + topic breadth — not which hosts were linked.
     const text = collectText(ctx.evidence);
-    const platforms = new Set(ctx.evidence.platforms).size;
     const topics = topicHits(text);
-    const breadth = clamp01(platforms / 3 + topics.size / 6);
+    const breadth = clamp01(topics.size / 5);
     const { count } = countHits(text, CRAFT_MARKERS);
     let maxTopic = 0;
     for (const v of topics.values()) maxTopic = Math.max(maxTopic, v);

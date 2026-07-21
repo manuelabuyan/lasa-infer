@@ -7,7 +7,7 @@
  * - Weight evidence by access / richness
  * - Word-boundary token matching
  * - Soft influence from taste axes
- * - Soft platform hints (near-zero; text/topics dominate)
+ * - No platform-type bias (Instagram vs TikTok etc. never tints taste)
  * - Strip platform chrome (e.g. IG "photos and videos" boilerplate)
  * - Image palette signals (swatches / warmth / vibrance) as second channel
  * - Change after first link; low confidence → lighter/softer colour
@@ -18,7 +18,7 @@ import {
   type ImagePaletteSignal,
   type LinkSnapshot,
 } from "../linkEvidence.js";
-import type { Evidence, PlatformId } from "../types.js";
+import type { Evidence } from "../types.js";
 import { collectText, topicHits } from "./lexicons.js";
 import type { DataConfidence, TasteAxisResult, TasteScoreContext } from "./types.js";
 
@@ -575,43 +575,6 @@ export function inferTasteColour(
     imageBoost = applyImagePaletteToScores(rawScores, imageSignals, textThin);
   }
 
-  // Platform hints — reserved micro-bias only. Text/topics own the colour.
-  // Softmax of tiny platform crumbs used to paint every empty IG the same
-  // blush/coral; if there is no real colour text, stay near slate instead.
-  const platforms = new Set(evidence.platforms);
-  const textOnlyMax = Math.max(
-    0,
-    ...Object.entries(rawScores)
-      .filter(([id]) => id !== "slate")
-      .map(([, v]) => v),
-  );
-  const platformHints: Array<{
-    platform: PlatformId;
-    colourId: string;
-    w: number;
-  }> = [
-    { platform: "tiktok", colourId: "violet", w: 0.03 },
-    { platform: "tiktok", colourId: "magenta", w: 0.015 },
-    { platform: "linkedin", colourId: "navy", w: 0.03 },
-    { platform: "linkedin", colourId: "ink", w: 0.015 },
-    { platform: "instagram", colourId: "blush", w: 0.02 },
-    { platform: "instagram", colourId: "coral", w: 0.01 },
-    { platform: "instagram", colourId: "ember", w: 0.008 },
-    { platform: "youtube", colourId: "crimson", w: 0.025 },
-    { platform: "youtube", colourId: "ink", w: 0.012 },
-    { platform: "x", colourId: "sky", w: 0.02 },
-    { platform: "x", colourId: "charcoal", w: 0.01 },
-  ];
-  // Only when colour text is essentially empty — and keep it tiny so softmax
-  // does not turn platform crumbs into a fixed identity colour.
-  const platformScale = textOnlyMax >= 0.25 ? 0 : textThin ? 0.06 : 0.02;
-  for (const h of platformHints) {
-    if (platforms.has(h.platform) && rawScores[h.colourId] !== undefined) {
-      rawScores[h.colourId] =
-        (rawScores[h.colourId] ?? 0) + h.w * platformScale;
-    }
-  }
-
   // Taste axis influence (when provided)
   const axisScore = (id: string) =>
     options.axes?.find((a) => a.axisId === id && a.score !== null)?.score ?? 0;
@@ -632,7 +595,7 @@ export function inferTasteColour(
   rawScores.blush = (rawScores.blush ?? 0) + curation * 0.1;
   rawScores.gold = (rawScores.gold ?? 0) + depth * 0.1;
 
-  // First-link friendly: platform alone is enough to leave pure slate
+  // Content/image only — platform id never contributes to colour scores.
   const maxNonSlate = Math.max(
     0,
     ...Object.entries(rawScores)
@@ -640,16 +603,11 @@ export function inferTasteColour(
       .map(([, v]) => v),
   );
 
-  // Only pure slate if we have literally nothing (no links at all)
-  const useSlateOnly =
-    snapshots.length === 0 && platforms.size === 0 && maxNonSlate < 0.05;
-
-  // Platform/boilerplate crumbs (maxNonSlate ≪ 0.1) must not win via softmax —
-  // that made every empty Instagram profile the same warm tint.
+  // Weak / empty signal → slate (no platform-type fallback tint)
   const signalTooWeak = maxNonSlate < 0.12;
 
   let weights: Record<string, number>;
-  if (useSlateOnly || signalTooWeak) {
+  if (signalTooWeak) {
     weights = { slate: 1 };
   } else {
     // Prefer sharper colour assignment (lower temperature)

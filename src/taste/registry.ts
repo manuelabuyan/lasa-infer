@@ -10,7 +10,7 @@ export const TASTE_AXES: readonly TasteAxisDef[] = [
     id: "breadth",
     label: "Breadth",
     description:
-      "Range of platforms, media kinds, and topic domains the person engages with.",
+      "Range of topic domains and content kinds (not which hosts were linked).",
     status: "active",
     version: 1,
     order: 10,
@@ -37,7 +37,7 @@ export const TASTE_AXES: readonly TasteAxisDef[] = [
     id: "coherence",
     label: "Coherence",
     description:
-      "Whether themes agree across links and platforms rather than feeling scattered.",
+      "Whether themes agree across text items rather than feeling scattered.",
     status: "active",
     version: 1,
     order: 40,
