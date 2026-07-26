@@ -309,6 +309,78 @@ export const COLOUR_DEFS: readonly TasteColourDef[] = [
   },
 ] as const;
 
+/** Where a raw colour score point came from (for open audit / debug UI). */
+export type ColourContributionSource =
+  | "topic"
+  | "keyword"
+  | "image_swatch"
+  | "image_warmth"
+  | "image_hue"
+  | "image_lightness"
+  | "image_vibrance"
+  | "axis"
+  | "baseline";
+
+export interface ColourContribution {
+  /** Palette colour id receiving the points. */
+  colourId: string;
+  colourLabel: string;
+  source: ColourContributionSource;
+  /** Human-readable evidence, e.g. topic "film" ×2, keyword "35mm". */
+  detail: string;
+  /** Raw score points added to this colour. */
+  amount: number;
+  /** Optional source link (handle / host). */
+  from?: string;
+}
+
+export interface ColourLinkEvidence {
+  /** @handle or host. */
+  from: string;
+  platform?: string;
+  /** Topics found in this link's public text. */
+  topics: string[];
+  /** Keywords found in this link's public text. */
+  keywords: string[];
+  /** Colours those hits pull toward. */
+  pullsColour: string[];
+  /** Image tags if palette was extracted. */
+  imageTags?: string[];
+  imageSwatches?: string[];
+  textPreview?: string;
+}
+
+export interface ColourAttribution {
+  /** Flat list of score contributions (sorted by amount desc). */
+  contributions: ColourContribution[];
+  /** Per winning/blended colour: total raw + blend weight + parts. */
+  byColour: Array<{
+    colourId: string;
+    colourLabel: string;
+    totalRaw: number;
+    blendWeight: number;
+    parts: ColourContribution[];
+  }>;
+  /** Per-link what was found in public text/image. */
+  linkEvidence: ColourLinkEvidence[];
+  topicsHit: string[];
+  keywordsHit: string[];
+  textLen: number;
+  contentMax: number;
+  signalTooWeak: boolean;
+  temperature: number | null;
+  winnerBias: number | null;
+  linkFloor: number;
+  confidenceParts: {
+    dataC: number;
+    confFromText: number;
+    confFromImage: number;
+    decisiveness: number;
+    contentConf: number;
+    final: number;
+  };
+}
+
 export interface TasteColourResult {
   id: string;
   label: string;
@@ -323,6 +395,8 @@ export interface TasteColourResult {
   scores: Record<string, number>;
   /** Blend weights after softmax (for debugging / UI). */
   blend: Array<{ id: string; label: string; weight: number; hex: string }>;
+  /** Full why/how breakdown for debug UI. */
+  attribution: ColourAttribution;
 }
 
 export function listTasteColours(
@@ -558,25 +632,70 @@ export function inferTasteColour(
   }
 
   const active = listTasteColours();
+  const labelOf = (id: string) => getTasteColour(id)?.label ?? id;
   const rawScores: Record<string, number> = {};
+  const contributions: ColourContribution[] = [];
+  const keywordsHitGlobal: string[] = [];
+
+  const pushContrib = (
+    colourId: string,
+    source: ColourContributionSource,
+    detail: string,
+    amount: number,
+    from?: string,
+  ) => {
+    if (amount <= 0.001) return;
+    const row: ColourContribution = {
+      colourId,
+      colourLabel: labelOf(colourId),
+      source,
+      detail,
+      amount,
+    };
+    if (from) row.from = from;
+    contributions.push(row);
+  };
 
   for (const def of active) {
     if (def.id === "slate") {
       rawScores[def.id] = 0.15; // always present soft baseline
+      pushContrib("slate", "baseline", "slate baseline", 0.15);
       continue;
     }
     let s = 0;
     for (const t of def.topics) {
-      s += (topicScores.get(t) ?? 0) * 1.15;
+      const count = topicScores.get(t) ?? 0;
+      if (count <= 0) continue;
+      const amount = count * 1.15;
+      s += amount;
+      pushContrib(
+        def.id,
+        "topic",
+        `topic “${t}” ×${count} → +${amount.toFixed(2)}`,
+        amount,
+      );
     }
     const { count: kwCount, matched: kwMatched } = countTermHits(
       text,
       def.keywords ?? [],
     );
-    s += kwCount * 1.25;
-    void kwMatched;
+    for (const kw of kwMatched) {
+      if (!keywordsHitGlobal.includes(kw)) keywordsHitGlobal.push(kw);
+      const amount = 1.25;
+      s += amount;
+      pushContrib(
+        def.id,
+        "keyword",
+        `keyword “${kw}” → +${amount.toFixed(2)}`,
+        amount,
+      );
+    }
+    void kwCount;
     rawScores[def.id] = s;
   }
+
+  // Per-link evidence map (which public text/image fired what)
+  const linkEvidence = buildLinkEvidence(snapshots, active);
 
   const textThin = textLen < 40;
 
@@ -586,7 +705,13 @@ export function inferTasteColour(
     .map((s) => s.imageSignals)
     .filter((s): s is ImagePaletteSignal => Boolean(s && s.confidence > 0.15));
   if (imageSignals.length > 0) {
-    applyImagePaletteToScores(rawScores, imageSignals, textThin);
+    applyImagePaletteToScores(
+      rawScores,
+      imageSignals,
+      textThin,
+      pushContrib,
+      snapshots,
+    );
   }
 
   // Real colour evidence from text + image only (before soft axis nudges).
@@ -620,17 +745,26 @@ export function inferTasteColour(
     const cur = axisPull(curation) * axisScale;
     const dist = axisPull(distinct) * axisScale;
 
-    rawScores.ember = (rawScores.ember ?? 0) + c * 0.35 + d * 0.2;
-    rawScores.copper = (rawScores.copper ?? 0) + c * 0.4;
-    rawScores.violet = (rawScores.violet ?? 0) + disc * 0.35;
-    rawScores.magenta =
-      (rawScores.magenta ?? 0) + disc * 0.2 + dist * 0.15;
-    rawScores.ink = (rawScores.ink ?? 0) + d * 0.15 + cur * 0.1;
-    rawScores.navy = (rawScores.navy ?? 0) + d * 0.25;
-    rawScores.charcoal =
-      (rawScores.charcoal ?? 0) + cur * 0.15 + dist * 0.1;
-    rawScores.blush = (rawScores.blush ?? 0) + cur * 0.1;
-    rawScores.gold = (rawScores.gold ?? 0) + d * 0.1;
+    const axisAdds: Array<[string, number, string]> = [
+      ["ember", c * 0.35, `axis craft ${craft.toFixed(2)}`],
+      ["ember", d * 0.2, `axis depth ${depth.toFixed(2)}`],
+      ["copper", c * 0.4, `axis craft ${craft.toFixed(2)}`],
+      ["violet", disc * 0.35, `axis discovery ${discovery.toFixed(2)}`],
+      ["magenta", disc * 0.2, `axis discovery ${discovery.toFixed(2)}`],
+      ["magenta", dist * 0.15, `axis distinct ${distinct.toFixed(2)}`],
+      ["ink", d * 0.15, `axis depth ${depth.toFixed(2)}`],
+      ["ink", cur * 0.1, `axis curation ${curation.toFixed(2)}`],
+      ["navy", d * 0.25, `axis depth ${depth.toFixed(2)}`],
+      ["charcoal", cur * 0.15, `axis curation ${curation.toFixed(2)}`],
+      ["charcoal", dist * 0.1, `axis distinct ${distinct.toFixed(2)}`],
+      ["blush", cur * 0.1, `axis curation ${curation.toFixed(2)}`],
+      ["gold", d * 0.1, `axis depth ${depth.toFixed(2)}`],
+    ];
+    for (const [id, amount, detail] of axisAdds) {
+      if (amount <= 0.001) continue;
+      rawScores[id] = (rawScores[id] ?? 0) + amount;
+      pushContrib(id, "axis", `${detail} → +${amount.toFixed(2)}`, amount);
+    }
   }
 
   const maxNonSlate = maxScoreExcludingSlate(rawScores);
@@ -640,6 +774,8 @@ export function inferTasteColour(
   const linkN = snapshots.length;
 
   let weights: Record<string, number>;
+  let temperatureUsed: number | null = null;
+  let winnerBiasUsed: number | null = null;
   if (signalTooWeak) {
     weights = { slate: 1 };
   } else {
@@ -647,6 +783,7 @@ export function inferTasteColour(
     // More links → slightly sharper still
     const temperature =
       linkN >= 3 ? 0.38 : linkN === 2 ? 0.45 : textThin ? 0.42 : 0.5;
+    temperatureUsed = temperature;
     weights = softmax(rawScores, temperature);
 
     // Winner bias: pull mass toward top colour so 1 clear hit isn't a muddy blend
@@ -660,6 +797,7 @@ export function inferTasteColour(
     }
     if (topId !== "slate" && topW > 0) {
       const bias = linkN >= 3 ? 0.35 : linkN === 2 ? 0.28 : 0.22;
+      winnerBiasUsed = bias;
       weights[topId] = topW + bias;
     }
 
@@ -769,6 +907,70 @@ export function inferTasteColour(
     }${topTopics.length ? ` · ${topTopics.join(", ")}` : ""}${imageNote}.`;
   })();
 
+  // Attribution: group contributions by colour for the debug UI
+  contributions.sort((a, b) => b.amount - a.amount);
+  const blendW = (id: string) =>
+    blendMeta.find((b) => b.id === id)?.weight ?? weights[id] ?? 0;
+  const byColourMap = new Map<
+    string,
+    ColourAttribution["byColour"][number]
+  >();
+  for (const c of contributions) {
+    if (c.colourId === "slate" && c.amount < 0.2) continue;
+    let row = byColourMap.get(c.colourId);
+    if (!row) {
+      row = {
+        colourId: c.colourId,
+        colourLabel: c.colourLabel,
+        totalRaw: 0,
+        blendWeight: blendW(c.colourId),
+        parts: [],
+      };
+      byColourMap.set(c.colourId, row);
+    }
+    row.totalRaw += c.amount;
+    row.parts.push(c);
+  }
+  // Ensure blend leaders appear even if only axis/tiny
+  for (const b of blendMeta) {
+    if (!byColourMap.has(b.id) && b.id !== "slate") {
+      byColourMap.set(b.id, {
+        colourId: b.id,
+        colourLabel: b.label,
+        totalRaw: rawScores[b.id] ?? 0,
+        blendWeight: b.weight,
+        parts: contributions.filter((x) => x.colourId === b.id),
+      });
+    } else if (byColourMap.has(b.id)) {
+      byColourMap.get(b.id)!.blendWeight = b.weight;
+    }
+  }
+  const byColour = [...byColourMap.values()].sort(
+    (a, b) => b.blendWeight - a.blendWeight || b.totalRaw - a.totalRaw,
+  );
+
+  const attribution: ColourAttribution = {
+    contributions: contributions.slice(0, 80),
+    byColour: byColour.slice(0, 10),
+    linkEvidence,
+    topicsHit: topTopics,
+    keywordsHit: keywordsHitGlobal.slice(0, 24),
+    textLen,
+    contentMax,
+    signalTooWeak,
+    temperature: temperatureUsed,
+    winnerBias: winnerBiasUsed,
+    linkFloor,
+    confidenceParts: {
+      dataC,
+      confFromText,
+      confFromImage,
+      decisiveness,
+      contentConf,
+      final: confidence,
+    },
+  };
+
   return {
     id: primaryId,
     label: primary.label,
@@ -779,6 +981,7 @@ export function inferTasteColour(
     summary,
     scores: rawScores,
     blend: blendMeta,
+    attribution,
   };
 }
 
@@ -798,22 +1001,64 @@ function maxScoreExcludingSlate(scores: Record<string, number>): number {
   );
 }
 
+type PushContrib = (
+  colourId: string,
+  source: ColourContributionSource,
+  detail: string,
+  amount: number,
+  from?: string,
+) => void;
+
 /**
- * Map image palette stats → colour raw scores.
- * Returns a rough boost magnitude for confidence / summary.
+ * Map image palette stats → colour raw scores (+ optional attribution).
  */
 function applyImagePaletteToScores(
   rawScores: Record<string, number>,
   images: ImagePaletteSignal[],
   textThin: boolean,
+  pushContrib?: PushContrib,
+  snapshots?: LinkSnapshot[],
 ): number {
   // Text still wins when rich; images matter a lot when bios are thin.
   const scale = textThin ? 1.35 : 0.7;
   let totalBoost = 0;
 
-  for (const img of images) {
+  // Match image index to snapshot handle for "from"
+  const fromFor = (idx: number): string | undefined => {
+    const snaps = snapshots ?? [];
+    let n = 0;
+    for (const s of snaps) {
+      if (s.imageSignals && s.imageSignals.confidence > 0.15) {
+        if (n === idx) {
+          return s.handle
+            ? `@${s.handle}`
+            : s.platformLabel || s.platform;
+        }
+        n++;
+      }
+    }
+    return `image#${idx + 1}`;
+  };
+
+  const add = (
+    id: string,
+    amount: number,
+    source: ColourContributionSource,
+    detail: string,
+    from?: string,
+  ) => {
+    if (amount <= 0.001) return;
+    rawScores[id] = (rawScores[id] ?? 0) + amount;
+    totalBoost += amount;
+    pushContrib?.(id, source, detail, amount, from);
+  };
+
+  for (let imgIdx = 0; imgIdx < images.length; imgIdx++) {
+    const img = images[imgIdx]!;
     const conf = clamp01(img.confidence);
     const base = scale * conf;
+    const from = fromFor(imgIdx);
+    const tags = img.tags.length ? img.tags.join("/") : "palette";
 
     // Nearest palette colours from swatches (dominant image colours)
     for (let i = 0; i < img.swatches.length; i++) {
@@ -822,9 +1067,14 @@ function applyImagePaletteToScores(
       const near = nearestColourIds(hex, 3);
       for (const { id, closeness } of near) {
         if (id === "slate") continue;
-        const add = base * rankW * closeness * 1.1;
-        rawScores[id] = (rawScores[id] ?? 0) + add;
-        totalBoost += add;
+        const amount = base * rankW * closeness * 1.1;
+        add(
+          id,
+          amount,
+          "image_swatch",
+          `swatch ${hex} (#${i + 1}, close ${closeness.toFixed(2)}) → +${amount.toFixed(2)}`,
+          from,
+        );
       }
     }
 
@@ -832,62 +1082,114 @@ function applyImagePaletteToScores(
     const w = img.warmth; // −1…+1
     if (w > 0.15) {
       const t = base * w;
-      rawScores.ember = (rawScores.ember ?? 0) + t * 0.55;
-      rawScores.coral = (rawScores.coral ?? 0) + t * 0.4;
-      rawScores.honey = (rawScores.honey ?? 0) + t * 0.3;
-      rawScores.copper = (rawScores.copper ?? 0) + t * 0.35;
-      rawScores.gold = (rawScores.gold ?? 0) + t * 0.25;
-      totalBoost += t;
+      add("ember", t * 0.55, "image_warmth", `warmth +${w.toFixed(2)} (${tags})`, from);
+      add("coral", t * 0.4, "image_warmth", `warmth +${w.toFixed(2)}`, from);
+      add("honey", t * 0.3, "image_warmth", `warmth +${w.toFixed(2)}`, from);
+      add("copper", t * 0.35, "image_warmth", `warmth +${w.toFixed(2)}`, from);
+      add("gold", t * 0.25, "image_warmth", `warmth +${w.toFixed(2)}`, from);
     } else if (w < -0.15) {
       const t = base * -w;
-      rawScores.ink = (rawScores.ink ?? 0) + t * 0.5;
-      rawScores.ice = (rawScores.ice ?? 0) + t * 0.4;
-      rawScores.navy = (rawScores.navy ?? 0) + t * 0.45;
-      rawScores.aqua = (rawScores.aqua ?? 0) + t * 0.3;
-      rawScores.sky = (rawScores.sky ?? 0) + t * 0.25;
-      totalBoost += t;
+      add("ink", t * 0.5, "image_warmth", `cool ${w.toFixed(2)} (${tags})`, from);
+      add("ice", t * 0.4, "image_warmth", `cool ${w.toFixed(2)}`, from);
+      add("navy", t * 0.45, "image_warmth", `cool ${w.toFixed(2)}`, from);
+      add("aqua", t * 0.3, "image_warmth", `cool ${w.toFixed(2)}`, from);
+      add("sky", t * 0.25, "image_warmth", `cool ${w.toFixed(2)}`, from);
     }
 
     // Lightness / darkness
     if (img.lightness < 0.32) {
       const t = base * (0.32 - img.lightness) * 2;
-      rawScores.charcoal = (rawScores.charcoal ?? 0) + t * 0.5;
-      rawScores.espresso = (rawScores.espresso ?? 0) + t * 0.35;
-      rawScores.navy = (rawScores.navy ?? 0) + t * 0.25;
-      totalBoost += t * 0.5;
+      add("charcoal", t * 0.5, "image_lightness", `dark L=${img.lightness.toFixed(2)}`, from);
+      add("espresso", t * 0.35, "image_lightness", `dark L=${img.lightness.toFixed(2)}`, from);
+      add("navy", t * 0.25, "image_lightness", `dark L=${img.lightness.toFixed(2)}`, from);
     } else if (img.lightness > 0.72) {
       const t = base * (img.lightness - 0.72) * 2;
-      rawScores.sand = (rawScores.sand ?? 0) + t * 0.35;
-      rawScores.ice = (rawScores.ice ?? 0) + t * 0.3;
-      rawScores.lavender = (rawScores.lavender ?? 0) + t * 0.25;
-      totalBoost += t * 0.4;
+      add("sand", t * 0.35, "image_lightness", `light L=${img.lightness.toFixed(2)}`, from);
+      add("ice", t * 0.3, "image_lightness", `light L=${img.lightness.toFixed(2)}`, from);
+      add("lavender", t * 0.25, "image_lightness", `light L=${img.lightness.toFixed(2)}`, from);
     }
 
     // Vibrance vs muted
     if (img.vibrance > 0.55) {
       const t = base * (img.vibrance - 0.4);
-      rawScores.magenta = (rawScores.magenta ?? 0) + t * 0.3;
-      rawScores.crimson = (rawScores.crimson ?? 0) + t * 0.25;
-      rawScores.violet = (rawScores.violet ?? 0) + t * 0.2;
-      totalBoost += t * 0.4;
+      add("magenta", t * 0.3, "image_vibrance", `vivid V=${img.vibrance.toFixed(2)}`, from);
+      add("crimson", t * 0.25, "image_vibrance", `vivid V=${img.vibrance.toFixed(2)}`, from);
+      add("violet", t * 0.2, "image_vibrance", `vivid V=${img.vibrance.toFixed(2)}`, from);
     } else if (img.vibrance < 0.28 && img.neutralShare > 0.45) {
       const t = base * 0.5;
-      rawScores.sage = (rawScores.sage ?? 0) + t * 0.35;
-      rawScores.sand = (rawScores.sand ?? 0) + t * 0.3;
-      rawScores.charcoal = (rawScores.charcoal ?? 0) + t * 0.25;
-      totalBoost += t * 0.35;
+      add("sage", t * 0.35, "image_vibrance", `muted V=${img.vibrance.toFixed(2)}`, from);
+      add("sand", t * 0.3, "image_vibrance", `muted V=${img.vibrance.toFixed(2)}`, from);
+      add("charcoal", t * 0.25, "image_vibrance", `muted V=${img.vibrance.toFixed(2)}`, from);
     }
 
     // Hue family soft pull (in addition to swatch match)
     const huePull = hueFamilyColourBoosts(img.hue, img.saturation);
     for (const [id, wHue] of Object.entries(huePull)) {
-      const add = base * wHue * 0.65;
-      rawScores[id] = (rawScores[id] ?? 0) + add;
-      totalBoost += add;
+      const amount = base * wHue * 0.65;
+      add(
+        id,
+        amount,
+        "image_hue",
+        `hue ${img.hue.toFixed(0)}° sat ${img.saturation.toFixed(2)} → +${amount.toFixed(2)}`,
+        from,
+      );
     }
   }
 
   return totalBoost;
+}
+
+function buildLinkEvidence(
+  snapshots: LinkSnapshot[],
+  active: TasteColourDef[],
+): ColourLinkEvidence[] {
+  const out: ColourLinkEvidence[] = [];
+  for (const snap of snapshots) {
+    const chunk = stripPlatformChrome(
+      [
+        snap.handle,
+        snap.title,
+        snap.description,
+        snap.author,
+        ...snap.textSignals,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+    const lower = chunk.toLowerCase();
+    const topics = [...topicHits(lower).keys()];
+    const keywords: string[] = [];
+    const pulls = new Set<string>();
+    for (const def of active) {
+      if (def.id === "slate") continue;
+      for (const t of def.topics) {
+        if (topics.includes(t)) pulls.add(def.id);
+      }
+      const { matched } = countTermHits(lower, def.keywords ?? []);
+      for (const kw of matched) {
+        if (!keywords.includes(kw)) keywords.push(kw);
+        pulls.add(def.id);
+      }
+    }
+    const from = snap.handle
+      ? `@${snap.handle}`
+      : snap.platformLabel || snap.platform;
+    const row: ColourLinkEvidence = {
+      from,
+      platform: snap.platformLabel || snap.platform,
+      topics,
+      keywords: keywords.slice(0, 16),
+      pullsColour: [...pulls],
+    };
+    if (snap.imageSignals?.tags?.length) row.imageTags = snap.imageSignals.tags;
+    if (snap.imageSignals?.swatches?.length) {
+      row.imageSwatches = snap.imageSignals.swatches.slice(0, 4);
+    }
+    const preview = chunk.replace(/\s+/g, " ").trim().slice(0, 120);
+    if (preview) row.textPreview = preview;
+    out.push(row);
+  }
+  return out;
 }
 
 function parseHex(hex: string): { r: number; g: number; b: number } | null {
