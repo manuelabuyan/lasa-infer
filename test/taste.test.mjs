@@ -81,11 +81,12 @@ test("low vs high data confidence", () => {
   const craft = high.axes.find((a) => a.axisId === "craft");
   assert.ok(craft && craft.score !== null && craft.score > 0.2);
 
-  assert.ok(high.colour?.id);
+  assert.ok(high.colour?.hex?.match(/^#[0-9A-F]{6}$/i));
   assert.ok(high.colour.rgb.includes(","));
   assert.ok(high.colour.blend?.length >= 1);
-  // Film/photo language should not be pure error
   assert.ok(typeof high.colour.confidence === "number");
+  // Continuous colour: id is a freeform hex (or soft slate)
+  assert.ok(high.colour.id.startsWith("#") || high.colour.id.length > 0);
 
   // First thin public-ish link should still produce a colour (not crash)
   const first = scoreTaste({
@@ -104,8 +105,9 @@ test("low vs high data confidence", () => {
       },
     ],
   });
-  assert.ok(first.colour.id);
+  assert.ok(first.colour.hex.match(/^#[0-9A-F]{6}$/i));
   assert.ok(first.colour.confidence > 0);
+  assert.ok(first.colour.attribution?.contributions?.length >= 1);
 
   // Higher conf should generally be bolder (not washed to soft slate grey mean)
   assert.ok(high.colour.confidence >= first.colour.confidence - 0.05);
@@ -169,11 +171,13 @@ test("image palette can tint colour without bio text", () => {
     ],
   });
 
-  assert.notEqual(warm.colour.id, "slate");
-  assert.notEqual(cool.colour.id, "slate");
-  assert.notEqual(warm.colour.id, cool.colour.id);
+  // Continuous freeform hex — not forced to discrete slate/ember ids
+  assert.ok(warm.colour.hex.match(/^#[0-9A-F]{6}$/i));
+  assert.ok(cool.colour.hex.match(/^#[0-9A-F]{6}$/i));
+  assert.notEqual(warm.colour.hex, cool.colour.hex);
+  assert.notEqual(warm.colour.hex.toUpperCase(), "#787E8A");
   assert.ok(
-    warm.colour.summary.includes("image"),
-    `expected image note in summary: ${warm.colour.summary}`,
+    warm.colour.summary.includes("image") || warm.colour.attribution?.contributions?.some((c) => c.source.startsWith("image")),
+    `expected image influence: ${warm.colour.summary}`,
   );
 });
