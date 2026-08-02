@@ -1,5 +1,6 @@
 import type { FactorHit } from "../../types.js";
 import {
+  CELEB_FOLLOW_MARKERS,
   CLICHE_MARKERS,
   collectText,
   countHits,
@@ -327,57 +328,21 @@ const extractors: Record<string, TasteSignalExtractor> = {
     };
   },
 
+  // Legacy extractors kept so registry ids resolve if re-enabled.
   follow_volume: (ctx) => {
     const follows = collectFollows(ctx);
     const n = follows.length;
-    // 0 follows → 0; ~12+ observed follows → high coverage
-    const score = clamp01(n / 12);
-    const conf = n === 0 ? 0.15 : clamp01(0.4 + n / 20);
     return {
-      score,
-      confidence: conf,
-      detail: n === 0 ? "no public follows observed" : `${n} followed account(s)`,
-      factors: [
-        factor(
-          "follow_volume",
-          score,
-          follows.slice(0, 12).map((f) => `follow:@${f.handle}`),
-          undefined,
-          n,
-        ),
-      ],
+      score: 0,
+      confidence: n === 0 ? 0.1 : 0.3,
+      detail: "follow_volume disabled — count alone is not taste",
+      factors: [factor("follow_volume", 0, [], undefined, n)],
     };
   },
 
   follow_topic_range: (ctx) => {
-    const follows = collectFollows(ctx);
-    if (follows.length === 0) {
-      return {
-        score: 0,
-        confidence: 0.1,
-        detail: "no follows to score topic range",
-        factors: [factor("follow_topic_range", 0, [])],
-      };
-    }
-    const text = followText(follows);
-    const topics = topicHits(text);
-    const score = clamp01(topics.size / 5);
-    return {
-      score,
-      confidence: clamp01(0.35 + follows.length / 25 + textConfidence(text) * 0.3),
-      detail: topics.size
-        ? `follow topics: ${[...topics.keys()].slice(0, 6).join(", ")}`
-        : "follows present but no topic lexicon hits",
-      factors: [
-        factor(
-          "follow_topic_range",
-          score,
-          [...topics.keys()].map((t) => `ftopic:${t}`),
-          undefined,
-          topics.size,
-        ),
-      ],
-    };
+    // Proxy to niche breadth for backwards compatibility if re-enabled
+    return extractors.follow_niche_breadth!(ctx);
   },
 
   follow_self_overlap: (ctx) => {
@@ -386,21 +351,24 @@ const extractors: Record<string, TasteSignalExtractor> = {
     const selfTopics = topicHits(selfText);
     if (follows.length === 0) {
       return {
-        score: 0.2,
+        score: 0.15,
         confidence: 0.1,
         detail: "no follows — cannot measure overlap",
-        factors: [factor("follow_self_overlap", 0.2, [])],
+        factors: [factor("follow_self_overlap", 0.15, [])],
       };
     }
     if (selfTopics.size === 0) {
       return {
-        score: 0.25,
-        confidence: 0.25,
+        score: 0.2,
+        confidence: 0.2,
         detail: "follows present but self profile has no topics yet",
-        factors: [factor("follow_self_overlap", 0.25, [])],
+        factors: [factor("follow_self_overlap", 0.2, [])],
       };
     }
-    const followTopics = topicHits(followText(follows));
+    // Prefer overlap with niche-leaning follows only
+    const nicheFollows = follows.filter((f) => scoreFollowQuality(f).niche >= 0.35);
+    const pool = nicheFollows.length >= 2 ? nicheFollows : follows;
+    const followTopics = topicHits(followText(pool));
     let overlap = 0;
     for (const t of selfTopics.keys()) {
       if (followTopics.has(t)) overlap += 1;
@@ -408,17 +376,183 @@ const extractors: Record<string, TasteSignalExtractor> = {
     const score = clamp01(overlap / Math.max(1, Math.min(4, selfTopics.size)));
     return {
       score,
-      confidence: clamp01(0.4 + follows.length / 30),
+      confidence: clamp01(0.35 + pool.length / 30),
       detail:
         overlap > 0
-          ? `${overlap} topic(s) shared with follows`
+          ? `${overlap} topic(s) shared with ${nicheFollows.length ? "niche " : ""}follows`
           : "no shared topics with follows yet",
       factors: [
         factor("follow_self_overlap", score, [`overlap:${overlap}`], undefined, overlap),
       ],
     };
   },
+
+  /**
+   * Depth among follows: craft/artist/niche language concentration.
+   * Mass celeb lists score low even if long.
+   */
+  follow_niche_depth: (ctx) => {
+    const follows = collectFollows(ctx);
+    if (follows.length === 0) {
+      return {
+        score: 0,
+        confidence: 0.1,
+        detail: "no follows for niche depth",
+        factors: [factor("follow_niche_depth", 0, [])],
+      };
+    }
+    const qualities = follows.map(scoreFollowQuality);
+    const meanNiche =
+      qualities.reduce((s, q) => s + q.niche, 0) / qualities.length;
+    // Depth: strong peak of craft/niche in the best third of follows
+    const sorted = [...qualities].sort((a, b) => b.niche - a.niche);
+    const topK = sorted.slice(0, Math.max(1, Math.ceil(sorted.length / 3)));
+    const peak =
+      topK.reduce((s, q) => s + q.niche, 0) / topK.length;
+    // Slight penalty if almost no bios (can't assess depth)
+    const withText = qualities.filter((q) => q.hasText).length;
+    const textCoverage = withText / follows.length;
+    const score = clamp01(0.55 * peak + 0.35 * meanNiche + 0.1 * textCoverage);
+    return {
+      score,
+      confidence: clamp01(0.3 + textCoverage * 0.5 + Math.min(0.2, follows.length / 40)),
+      detail: `mean niche ${meanNiche.toFixed(2)} · peak third ${peak.toFixed(2)} · ${withText}/${follows.length} with bio text`,
+      factors: [
+        factor("follow_niche_depth", score, [`peak:${peak}`, `mean:${meanNiche}`], undefined, peak),
+      ],
+    };
+  },
+
+  /**
+   * Breadth among *niche-leaning* follows (topic range of creators, not celeb soup).
+   */
+  follow_niche_breadth: (ctx) => {
+    const follows = collectFollows(ctx);
+    if (follows.length === 0) {
+      return {
+        score: 0,
+        confidence: 0.1,
+        detail: "no follows for niche breadth",
+        factors: [factor("follow_niche_breadth", 0, [])],
+      };
+    }
+    const nicheFollows = follows.filter((f) => scoreFollowQuality(f).niche >= 0.3);
+    const pool = nicheFollows.length >= 1 ? nicheFollows : follows;
+    const text = followText(pool);
+    const topics = topicHits(text);
+    // Celeb-only lists: few real topics or only fashion/sports mass tags
+    const score = clamp01(topics.size / 5);
+    // Down-weight if pool is mostly mainstream
+    const meanMain =
+      pool.reduce((s, f) => s + scoreFollowQuality(f).mainstream, 0) / pool.length;
+    const adjusted = clamp01(score * (1 - 0.55 * meanMain));
+    return {
+      score: adjusted,
+      confidence: clamp01(0.3 + pool.length / 25 + textConfidence(text) * 0.25),
+      detail: topics.size
+        ? `niche-follow topics: ${[...topics.keys()].slice(0, 6).join(", ")} (main drag ${meanMain.toFixed(2)})`
+        : "little topic range among follows",
+      factors: [
+        factor(
+          "follow_niche_breadth",
+          adjusted,
+          [...topics.keys()].map((t) => `ftopic:${t}`),
+          undefined,
+          topics.size,
+        ),
+      ],
+    };
+  },
+
+  /**
+   * Inverse of mainstream/celeb density. 1000 celeb follows → low.
+   */
+  follow_mainstream_inverse: (ctx) => {
+    const follows = collectFollows(ctx);
+    if (follows.length === 0) {
+      return {
+        score: 0.5,
+        confidence: 0.1,
+        detail: "no follows — neutral mainstream inverse",
+        factors: [factor("follow_mainstream_inverse", 0.5, [])],
+      };
+    }
+    const qualities = follows.map(scoreFollowQuality);
+    const meanMain =
+      qualities.reduce((s, q) => s + q.mainstream, 0) / qualities.length;
+    const meanNiche =
+      qualities.reduce((s, q) => s + q.niche, 0) / qualities.length;
+    // High mainstream share → low score; niche presence can still lift slightly
+    let score = clamp01(1 - meanMain);
+    // Pure mainstream blob: extra drag
+    if (meanMain > 0.55 && meanNiche < 0.25) {
+      score = clamp01(score * 0.55);
+    }
+    // Mass follow lists that are mostly mainstream: stronger drag
+    if (follows.length >= 20 && meanMain > 0.45) {
+      score = clamp01(score * 0.75);
+    }
+    return {
+      score,
+      confidence: clamp01(0.35 + Math.min(0.4, follows.length / 30)),
+      detail: `mainstream density ${meanMain.toFixed(2)} · niche ${meanNiche.toFixed(2)} · n=${follows.length}`,
+      factors: [
+        factor(
+          "follow_mainstream_inverse",
+          score,
+          [`main:${meanMain}`, `niche:${meanNiche}`, `n:${follows.length}`],
+          undefined,
+          meanMain,
+        ),
+      ],
+    };
+  },
 };
+
+/** Per-account niche vs mainstream score for follow-graph taste. */
+export function scoreFollowQuality(f: {
+  handle: string;
+  displayName?: string;
+  bio?: string;
+}): { niche: number; mainstream: number; hasText: boolean } {
+  const text = [f.handle, f.displayName, f.bio]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const hasText = Boolean(f.bio && f.bio.trim().length > 4);
+  const handle = f.handle.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  const { count: nicheLex } = countHits(text, NICHE_MARKERS);
+  const { count: craftLex } = countHits(text, CRAFT_MARKERS);
+  const { count: mainLex } = countHits(text, MAINSTREAM_MARKERS);
+  const celebHit = CELEB_FOLLOW_MARKERS.some(
+    (c) => handle.includes(c) || text.includes(c),
+  );
+
+  // Topics that lean crafty when present in follow bios
+  const topics = topicHits(text);
+  const craftTopics = ["film", "photo", "art", "music", "design", "literature", "architecture"];
+  let craftTopicHits = 0;
+  for (const t of craftTopics) {
+    if (topics.has(t)) craftTopicHits += 1;
+  }
+
+  let niche = clamp01(
+    nicheLex * 0.22 + craftLex * 0.18 + craftTopicHits * 0.2 + (hasText ? 0.08 : 0),
+  );
+  let mainstream = clamp01(mainLex * 0.28 + (celebHit ? 0.55 : 0));
+
+  // Empty bio + generic handle → neutral, slightly mainstream-leaning noise
+  if (!hasText && niche < 0.1 && mainstream < 0.15) {
+    niche = 0.12;
+    mainstream = 0.25;
+  }
+
+  // Mutual exclusion soft: high celeb marker suppresses niche
+  if (celebHit) niche = clamp01(niche * 0.35);
+
+  return { niche, mainstream, hasText };
+}
 
 function collectFollows(ctx: TasteScoreContext) {
   const fromEvidence = ctx.evidence.follows ?? [];

@@ -101,9 +101,9 @@ export const TASTE_AXES: readonly TasteAxisDef[] = [
     id: "social_graph",
     label: "Social graph",
     description:
-      "Taste implied by accounts the person follows (public following lists / embedded graph).",
+      "Taste from who they follow: niche depth + niche breadth among creators, inverse of celeb/mainstream-heavy graphs. Raw follow count is not taste.",
     status: "active",
-    version: 2,
+    version: 3,
     order: 90,
   },
   {

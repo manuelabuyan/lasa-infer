@@ -195,36 +195,70 @@ export const TASTE_SIGNALS: readonly TasteSignalDef[] = [
   },
 
   // --- social_graph (who they follow) ---
+  // Quality > raw count: celeb/mainstream-heavy lists score low;
+  // niche creators/artists raise both breadth and depth of follow taste.
   {
     id: "follow_volume",
     axisId: "social_graph",
-    title: "Follow volume",
+    title: "Follow coverage (legacy)",
     description:
-      "How many followed accounts we observed publicly (coverage of the graph).",
+      "Disabled: raw follow count is not taste. Use niche depth/breadth + mainstream inverse.",
     inputs: ["follows", "link_snapshots"],
-    weight: 0.3,
-    status: "active",
-    version: 1,
+    weight: 0,
+    status: "disabled",
+    version: 2,
   },
   {
     id: "follow_topic_range",
     axisId: "social_graph",
-    title: "Follow topic range",
-    description:
-      "Topic diversity across followed accounts’ public bios/handles.",
+    title: "Follow topic range (legacy)",
+    description: "Superseded by follow_niche_breadth.",
     inputs: ["follows"],
-    weight: 0.35,
-    status: "active",
-    version: 1,
+    weight: 0,
+    status: "disabled",
+    version: 2,
   },
   {
     id: "follow_self_overlap",
     axisId: "social_graph",
     title: "Follow–self theme overlap",
     description:
-      "Shared topics between the person’s own text and accounts they follow (curated affinity).",
+      "Shared topics between self and follows (affinity). Secondary to niche quality.",
     inputs: ["follows", "bios", "captions"],
+    weight: 0.15,
+    status: "active",
+    version: 2,
+  },
+  {
+    id: "follow_niche_depth",
+    axisId: "social_graph",
+    title: "Follow niche depth",
+    description:
+      "How craft/artist/niche the followed accounts look (makers, experimental, local scenes) vs empty or generic follows.",
+    inputs: ["follows"],
     weight: 0.35,
+    status: "active",
+    version: 1,
+  },
+  {
+    id: "follow_niche_breadth",
+    axisId: "social_graph",
+    title: "Follow niche breadth",
+    description:
+      "Range of topic domains among niche-leaning follows (not celebrity scatter).",
+    inputs: ["follows"],
+    weight: 0.25,
+    status: "active",
+    version: 1,
+  },
+  {
+    id: "follow_mainstream_inverse",
+    axisId: "social_graph",
+    title: "Follow mainstream inverse",
+    description:
+      "Higher when follows are not dominated by celebs / viral / mass-pop brands. Thousands of mainstream follows → low.",
+    inputs: ["follows"],
+    weight: 0.25,
     status: "active",
     version: 1,
   },

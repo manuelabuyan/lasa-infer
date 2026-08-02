@@ -17,6 +17,7 @@ import {
 } from "../linkEvidence.js";
 import type { Evidence } from "../types.js";
 import { collectText, topicHits } from "./lexicons.js";
+import { scoreFollowQuality } from "./signals/extractors.js";
 import type {
   DataConfidence,
   TasteAxisResult,
@@ -711,22 +712,33 @@ export function inferTasteColour(
 
   weightedText += ` ${stripPlatformChrome(collectText(evidence))}`;
 
-  // Follow graph — who they follow also colours taste (lower weight than self).
-  // Scale ~0.35 so own profile still leads when both exist.
-  const FOLLOW_SCALE = 0.35;
+  // Follow graph — niche creators colour taste more; celeb/mainstream follows less.
+  // Base scale ~0.4 of self; each follow re-weighted by niche quality (0.15–1.2).
+  const FOLLOW_SCALE = 0.4;
   const follows =
     evidence.follows ??
     snapshots.flatMap((s) => s.follows ?? []);
   if (follows.length > 0) {
-    const followChunk = stripPlatformChrome(
-      follows
-        .map((f) =>
-          [f.handle, f.displayName, f.bio].filter(Boolean).join(" "),
-        )
-        .join(" "),
-    );
+    let followWeightSum = 0;
+    let followChunk = "";
+    for (const f of follows) {
+      const q = scoreFollowQuality(f);
+      // Niche creators: full/boosted; mainstream celebs: thin
+      const unit = 0.15 + q.niche * 0.85 - q.mainstream * 0.55;
+      const u = Math.max(0.05, unit);
+      const piece = stripPlatformChrome(
+        [f.handle, f.displayName, f.bio].filter(Boolean).join(" "),
+      );
+      if (!piece.trim()) continue;
+      // Repeat piece by quality (cheap weighted bag-of-words)
+      const pieceReps = Math.max(1, Math.round(u * 3));
+      for (let i = 0; i < pieceReps; i++) followChunk += ` ${piece}`;
+      followWeightSum += u;
+    }
     if (followChunk.trim()) {
-      const fw = FOLLOW_SCALE * clamp01(follows.length / 8);
+      const fw =
+        FOLLOW_SCALE *
+        clamp01(followWeightSum / Math.max(3, follows.length * 0.6));
       const reps = Math.max(1, Math.round(fw * 4));
       for (let i = 0; i < reps; i++) weightedText += ` ${followChunk}`;
       totalWeight += fw;
