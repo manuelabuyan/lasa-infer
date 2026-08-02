@@ -160,16 +160,16 @@ export const TASTE_SIGNALS: readonly TasteSignalDef[] = [
     version: 1,
   },
 
-  // --- craft ---
+  // --- craft (includes what they create, not only identity words) ---
   {
     id: "maker_language",
     axisId: "craft",
     title: "Maker language",
     description: "Making / building / creative practice terms.",
     inputs: ["bios", "captions"],
-    weight: 0.6,
+    weight: 0.18,
     status: "active",
-    version: 1,
+    version: 2,
   },
   {
     id: "process_language",
@@ -177,7 +177,40 @@ export const TASTE_SIGNALS: readonly TasteSignalDef[] = [
     title: "Process language",
     description: "Process and practice markers (edit, study, shoot, …).",
     inputs: ["bios", "captions"],
-    weight: 0.4,
+    weight: 0.17,
+    status: "active",
+    version: 2,
+  },
+  {
+    id: "creative_output",
+    axisId: "craft",
+    title: "Creative output",
+    description:
+      "Evidence they publish work they made: pieces, products, editions, shows, case studies.",
+    inputs: ["bios", "captions", "link_snapshots"],
+    weight: 0.28,
+    status: "active",
+    version: 1,
+  },
+  {
+    id: "originality_markers",
+    axisId: "craft",
+    title: "Originality / adaptation",
+    description:
+      "Authorship and intentional adaptation (series, iteration, material study) vs empty repost energy.",
+    inputs: ["bios", "captions"],
+    weight: 0.2,
+    status: "active",
+    version: 1,
+  },
+  {
+    id: "derivative_inverse",
+    axisId: "craft",
+    title: "Derivative inverse",
+    description:
+      "Higher when text avoids dupe/viral-clone/template/low-effort copy language.",
+    inputs: ["bios", "captions"],
+    weight: 0.17,
     status: "active",
     version: 1,
   },

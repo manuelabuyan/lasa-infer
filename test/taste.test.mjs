@@ -279,6 +279,64 @@ test("niche follows score higher social_graph than celeb/mainstream follows", ()
   assert.ok(niche.colour.hex.match(/^#[0-9A-F]{6}$/i));
 });
 
+test("authored craft ranks higher than derivative/low-effort copy language", () => {
+  const maker = scoreTaste({
+    snapshots: [
+      {
+        url: "https://instagram.com/maker",
+        platform: "instagram",
+        contentKind: "profile",
+        access: "public_meta",
+        title: "Ceramicist",
+        description:
+          "My work: limited edition series. Material study, ongoing series, self-initiated studio practice",
+        textSignals: [
+          "My work limited edition series material study",
+          "Self-initiated prototype I made from scratch",
+        ],
+        notes: [],
+        fetchedAt: new Date().toISOString(),
+        handle: "maker",
+      },
+    ],
+  });
+  const dupe = scoreTaste({
+    snapshots: [
+      {
+        url: "https://instagram.com/dupe",
+        platform: "instagram",
+        contentKind: "profile",
+        access: "public_meta",
+        title: "Content",
+        description:
+          "Exact dupe of the viral trend recreate this trend canva template low effort dropship",
+        textSignals: [
+          "Exact dupe of the viral remake",
+          "Canva template dropshipping white label",
+        ],
+        notes: [],
+        fetchedAt: new Date().toISOString(),
+        handle: "dupe",
+      },
+    ],
+  });
+  const craftM = maker.axes.find((a) => a.axisId === "craft");
+  const craftD = dupe.axes.find((a) => a.axisId === "craft");
+  assert.ok(craftM?.score != null && craftD?.score != null);
+  assert.ok(
+    craftM.score > craftD.score,
+    `craft maker ${craftM.score} vs dupe ${craftD.score}`,
+  );
+  assert.ok(
+    maker.tasteRank.score > dupe.tasteRank.score,
+    `rank maker ${maker.tasteRank.score} vs dupe ${dupe.tasteRank.score}`,
+  );
+  const deriv = dupe.axes
+    .find((a) => a.axisId === "craft")
+    ?.signals.find((s) => s.signalId === "derivative_inverse");
+  assert.ok(deriv && deriv.score < 0.6);
+});
+
 test("taste rank is 0–100 under normal population model", () => {
   const empty = scoreTaste({ snapshots: [] });
   assert.ok(empty.tasteRank);

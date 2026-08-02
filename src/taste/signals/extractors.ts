@@ -5,9 +5,12 @@ import {
   collectText,
   countHits,
   CRAFT_MARKERS,
+  CREATIVE_OUTPUT_MARKERS,
   CURATION_MARKERS,
+  DERIVATIVE_MARKERS,
   MAINSTREAM_MARKERS,
   NICHE_MARKERS,
+  ORIGINALITY_MARKERS,
   topicHits,
 } from "../lexicons.js";
 import type {
@@ -304,6 +307,110 @@ const extractors: Record<string, TasteSignalExtractor> = {
       confidence: textConfidence(text),
       detail: matched.length ? matched.slice(0, 6).join(", ") : "no process markers",
       factors: [factor("process_language", score, matched.map((m) => `proc:${m}`), undefined, count)],
+    };
+  },
+
+  /**
+   * Public evidence of work they made (pieces, products, shows) + soft image intentionality.
+   */
+  creative_output: (ctx) => {
+    const text = collectText(ctx.evidence);
+    const { count, matched } = countHits(text, CREATIVE_OUTPUT_MARKERS);
+    const posts = ctx.evidence.posts ?? [];
+    const madePosts = posts.filter(
+      (p) =>
+        p.mediaKind === "image" ||
+        p.mediaKind === "video" ||
+        p.mediaKind === "carousel" ||
+        (p.caption && countHits(p.caption.toLowerCase(), CREATIVE_OUTPUT_MARKERS).count > 0),
+    ).length;
+    // Soft visual proxy: intentional palettes (not a full aesthetic judge)
+    let imageIntent = 0;
+    let imageN = 0;
+    for (const snap of ctx.snapshots) {
+      const img = snap.imageSignals;
+      if (!img || img.confidence < 0.2) continue;
+      imageN += 1;
+      // Distinct hue + not fully neutral → slightly more “considered” frame
+      const intent =
+        img.vibrance * 0.45 +
+        (1 - img.neutralShare) * 0.35 +
+        (img.saturation > 0.15 ? 0.2 : 0);
+      imageIntent += clamp01(intent);
+    }
+    const imageScore = imageN > 0 ? imageIntent / imageN : 0;
+
+    const score = clamp01(
+      count / 4 * 0.55 +
+        clamp01(madePosts / 3) * 0.25 +
+        imageScore * 0.2,
+    );
+    return {
+      score,
+      confidence: clamp01(
+        textConfidence(text) * 0.7 + (imageN > 0 ? 0.2 : 0) + (count > 0 ? 0.1 : 0),
+      ),
+      detail:
+        count > 0 || madePosts > 0
+          ? `output markers: ${matched.slice(0, 5).join(", ") || "media posts"} · visual intent~${imageScore.toFixed(2)}`
+          : "little evidence of authored work in public text",
+      factors: [
+        factor(
+          "creative_output",
+          score,
+          matched.map((m) => `out:${m}`),
+          undefined,
+          count,
+        ),
+      ],
+    };
+  },
+
+  originality_markers: (ctx) => {
+    const text = collectText(ctx.evidence);
+    const { count, matched } = countHits(text, ORIGINALITY_MARKERS);
+    const { count: craftN } = countHits(text, CRAFT_MARKERS);
+    // Originality lands harder when process language co-occurs
+    const score = clamp01(count / 3 * 0.75 + clamp01(craftN / 5) * 0.25);
+    return {
+      score,
+      confidence: textConfidence(text),
+      detail: matched.length
+        ? `originality: ${matched.slice(0, 5).join(", ")}`
+        : "no strong originality/adaptation markers",
+      factors: [
+        factor(
+          "originality_markers",
+          score,
+          matched.map((m) => `orig:${m}`),
+          undefined,
+          count,
+        ),
+      ],
+    };
+  },
+
+  derivative_inverse: (ctx) => {
+    const text = collectText(ctx.evidence);
+    const { count, matched } = countHits(text, DERIVATIVE_MARKERS);
+    // Any blatant dupe language pulls hard toward low craft/taste
+    const score = clamp01(1 - count / 2);
+    return {
+      score,
+      confidence: textConfidence(text) * 0.85,
+      detail:
+        count === 0
+          ? "no dupe/template/low-effort copy markers"
+          : `derivative hits: ${matched.slice(0, 5).join(", ")}`,
+      factors: [
+        factor(
+          "derivative_inverse",
+          score,
+          matched.map((m) => `deriv:${m}`),
+          undefined,
+          count,
+        ),
+      ],
     };
   },
 

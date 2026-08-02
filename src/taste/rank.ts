@@ -33,14 +33,18 @@ export const TASTE_POPULATION = {
   sd: 0.14,
 } as const;
 
-/** Weights for composite “high taste” latent (must sum ~1). */
+/**
+ * Weights for composite “high taste” latent (must sum ~1).
+ * Craft is heavy: what someone *creates* (and whether it’s original vs dupe)
+ * should move rank as much as who they follow.
+ */
 const LATENT_AXIS_WEIGHTS: Array<{ axisId: string; weight: number }> = [
-  { axisId: "social_graph", weight: 0.28 },
-  { axisId: "distinctiveness", weight: 0.18 },
-  { axisId: "discovery_orientation", weight: 0.18 },
-  { axisId: "craft", weight: 0.14 },
-  { axisId: "curation", weight: 0.12 },
-  { axisId: "depth", weight: 0.1 },
+  { axisId: "craft", weight: 0.26 },
+  { axisId: "social_graph", weight: 0.22 },
+  { axisId: "distinctiveness", weight: 0.15 },
+  { axisId: "discovery_orientation", weight: 0.14 },
+  { axisId: "curation", weight: 0.1 },
+  { axisId: "depth", weight: 0.08 },
 ];
 
 function clamp01(n: number): number {

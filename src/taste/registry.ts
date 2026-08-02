@@ -64,9 +64,9 @@ export const TASTE_AXES: readonly TasteAxisDef[] = [
     id: "craft",
     label: "Craft",
     description:
-      "Maker, process, and intentional practice signals (making vs only consuming).",
+      "What they create and how: maker/process language, published work, originality/adaptation; inverse of dupe/template/low-effort copy.",
     status: "active",
-    version: 1,
+    version: 2,
     order: 70,
   },
   {
