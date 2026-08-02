@@ -27,6 +27,9 @@ export {
   describeTasteModel,
   printTasteModel,
   computeDataConfidence,
+  computeTasteRank,
+  normalCdf,
+  TASTE_POPULATION,
   scoreTaste,
   formatTasteProfile,
   COLOUR_DEFS,
@@ -47,6 +50,7 @@ export {
   type TasteSignalResult,
   type TasteColourDef,
   type TasteColourResult,
+  type TasteRankResult,
   type RegistryStatus,
 } from "./taste/index.js";
 export type {

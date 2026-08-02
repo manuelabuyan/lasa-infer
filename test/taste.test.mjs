@@ -278,3 +278,47 @@ test("niche follows score higher social_graph than celeb/mainstream follows", ()
   );
   assert.ok(niche.colour.hex.match(/^#[0-9A-F]{6}$/i));
 });
+
+test("taste rank is 0–100 under normal population model", () => {
+  const empty = scoreTaste({ snapshots: [] });
+  assert.ok(empty.tasteRank);
+  assert.ok(empty.tasteRank.score >= 1 && empty.tasteRank.score <= 99);
+
+  const rich = scoreTaste({
+    snapshots: Array.from({ length: 3 }, (_, i) => ({
+      url: `https://example.com/u${i}`,
+      platform: "instagram",
+      contentKind: "profile",
+      access: "public_meta",
+      title: "Film photographer shooting 35mm contax",
+      description:
+        "Analog process darkroom experimental short film independent archive",
+      textSignals: [
+        "Film photographer shooting 35mm contax",
+        "Analog process darkroom experimental short film independent archive",
+      ],
+      notes: [],
+      fetchedAt: new Date().toISOString(),
+      handle: `user${i}`,
+      follows: [
+        {
+          handle: "smallpress",
+          platform: "instagram",
+          bio: "Independent zine experimental archive underground",
+          source: "embedded",
+        },
+        {
+          handle: "darkroomlab",
+          platform: "instagram",
+          bio: "35mm film photographer analog darkroom process",
+          source: "embedded",
+        },
+      ],
+    })),
+  });
+  assert.ok(rich.tasteRank);
+  assert.ok(rich.tasteRank.score >= 1 && rich.tasteRank.score <= 99);
+  assert.ok(rich.tasteRank.score > empty.tasteRank.score);
+  assert.ok(typeof rich.tasteRank.z === "number");
+  assert.ok(rich.tasteRank.parts.length >= 3);
+});

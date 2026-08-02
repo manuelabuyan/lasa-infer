@@ -85,6 +85,8 @@ export interface TasteProfile {
   dataConfidence: DataConfidence;
   /** First visual conclusion — drives the living graphic colour. */
   colour: import("./colour.js").TasteColourResult;
+  /** Relative 0–100 taste rank (normal population model). */
+  tasteRank?: import("./rank.js").TasteRankResult;
   /** Nested tree for docs / debugging / UI. */
   model: TasteModelDescription;
 }

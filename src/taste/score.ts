@@ -14,6 +14,7 @@ import type {
 } from "./types.js";
 import { describeTasteModel } from "./describe.js";
 import { inferTasteColour } from "./colour.js";
+import { computeTasteRank } from "./rank.js";
 
 function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
@@ -131,17 +132,23 @@ export function scoreTaste(options: ScoreTasteOptions = {}): TasteProfile {
     axesOut.push(axisResult);
   }
 
-const colour = inferTasteColour(evidence, snapshots, {
+  const colour = inferTasteColour(evidence, snapshots, {
     axes: axesOut,
     dataConfidence,
   });
 
-  return {
+  const profileBase = {
     inferVersion: INFER_VERSION,
     axes: axesOut,
     dataConfidence,
     colour,
     model: describeTasteModel(),
+  };
+  const tasteRank = computeTasteRank(profileBase);
+
+  return {
+    ...profileBase,
+    tasteRank,
   };
 }
 
@@ -151,8 +158,13 @@ export function formatTasteProfile(profile: TasteProfile): string {
     `infer ${profile.inferVersion}`,
     `colour: ${profile.colour.label} (${profile.colour.hex}) — ${profile.colour.summary}`,
     `data confidence: ${(profile.dataConfidence.score * 100).toFixed(0)}% (${profile.dataConfidence.label}) — ${profile.dataConfidence.summary}`,
-    "axes:",
   ];
+  if (profile.tasteRank) {
+    lines.push(
+      `taste rank: ${profile.tasteRank.score}/100 (${profile.tasteRank.band}) z=${profile.tasteRank.z.toFixed(2)} — ${profile.tasteRank.summary}`,
+    );
+  }
+  lines.push("axes:");
   for (const a of profile.axes) {
     if (a.score === null) {
       lines.push(`  - ${a.label} [${a.status}] — ${a.note ?? "n/a"}`);

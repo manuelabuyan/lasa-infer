@@ -22,6 +22,12 @@ export { listExtractorIds } from "./signals/extractors.js";
 export { describeTasteModel, printTasteModel } from "./describe.js";
 export { computeDataConfidence } from "./confidence.js";
 export {
+  computeTasteRank,
+  normalCdf,
+  TASTE_POPULATION,
+  type TasteRankResult,
+} from "./rank.js";
+export {
   scoreTaste,
   formatTasteProfile,
   type ScoreTasteOptions,
