@@ -326,7 +326,124 @@ const extractors: Record<string, TasteSignalExtractor> = {
       ],
     };
   },
+
+  follow_volume: (ctx) => {
+    const follows = collectFollows(ctx);
+    const n = follows.length;
+    // 0 follows → 0; ~12+ observed follows → high coverage
+    const score = clamp01(n / 12);
+    const conf = n === 0 ? 0.15 : clamp01(0.4 + n / 20);
+    return {
+      score,
+      confidence: conf,
+      detail: n === 0 ? "no public follows observed" : `${n} followed account(s)`,
+      factors: [
+        factor(
+          "follow_volume",
+          score,
+          follows.slice(0, 12).map((f) => `follow:@${f.handle}`),
+          undefined,
+          n,
+        ),
+      ],
+    };
+  },
+
+  follow_topic_range: (ctx) => {
+    const follows = collectFollows(ctx);
+    if (follows.length === 0) {
+      return {
+        score: 0,
+        confidence: 0.1,
+        detail: "no follows to score topic range",
+        factors: [factor("follow_topic_range", 0, [])],
+      };
+    }
+    const text = followText(follows);
+    const topics = topicHits(text);
+    const score = clamp01(topics.size / 5);
+    return {
+      score,
+      confidence: clamp01(0.35 + follows.length / 25 + textConfidence(text) * 0.3),
+      detail: topics.size
+        ? `follow topics: ${[...topics.keys()].slice(0, 6).join(", ")}`
+        : "follows present but no topic lexicon hits",
+      factors: [
+        factor(
+          "follow_topic_range",
+          score,
+          [...topics.keys()].map((t) => `ftopic:${t}`),
+          undefined,
+          topics.size,
+        ),
+      ],
+    };
+  },
+
+  follow_self_overlap: (ctx) => {
+    const follows = collectFollows(ctx);
+    const selfText = collectText(ctx.evidence);
+    const selfTopics = topicHits(selfText);
+    if (follows.length === 0) {
+      return {
+        score: 0.2,
+        confidence: 0.1,
+        detail: "no follows — cannot measure overlap",
+        factors: [factor("follow_self_overlap", 0.2, [])],
+      };
+    }
+    if (selfTopics.size === 0) {
+      return {
+        score: 0.25,
+        confidence: 0.25,
+        detail: "follows present but self profile has no topics yet",
+        factors: [factor("follow_self_overlap", 0.25, [])],
+      };
+    }
+    const followTopics = topicHits(followText(follows));
+    let overlap = 0;
+    for (const t of selfTopics.keys()) {
+      if (followTopics.has(t)) overlap += 1;
+    }
+    const score = clamp01(overlap / Math.max(1, Math.min(4, selfTopics.size)));
+    return {
+      score,
+      confidence: clamp01(0.4 + follows.length / 30),
+      detail:
+        overlap > 0
+          ? `${overlap} topic(s) shared with follows`
+          : "no shared topics with follows yet",
+      factors: [
+        factor("follow_self_overlap", score, [`overlap:${overlap}`], undefined, overlap),
+      ],
+    };
+  },
 };
+
+function collectFollows(ctx: TasteScoreContext) {
+  const fromEvidence = ctx.evidence.follows ?? [];
+  if (fromEvidence.length > 0) return fromEvidence;
+  const out: NonNullable<typeof ctx.evidence.follows> = [];
+  const seen = new Set<string>();
+  for (const snap of ctx.snapshots) {
+    for (const f of snap.follows ?? []) {
+      const key = `${f.platform}:${f.handle.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(f);
+    }
+  }
+  return out;
+}
+
+function followText(
+  follows: Array<{ handle: string; displayName?: string; bio?: string }>,
+): string {
+  return follows
+    .map((f) => [f.handle, f.displayName, f.bio].filter(Boolean).join(" "))
+    .join(" \n ")
+    .toLowerCase();
+}
 
 export function runSignal(
   signalId: string,

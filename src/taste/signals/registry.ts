@@ -193,6 +193,41 @@ export const TASTE_SIGNALS: readonly TasteSignalDef[] = [
     status: "active",
     version: 1,
   },
+
+  // --- social_graph (who they follow) ---
+  {
+    id: "follow_volume",
+    axisId: "social_graph",
+    title: "Follow volume",
+    description:
+      "How many followed accounts we observed publicly (coverage of the graph).",
+    inputs: ["follows", "link_snapshots"],
+    weight: 0.3,
+    status: "active",
+    version: 1,
+  },
+  {
+    id: "follow_topic_range",
+    axisId: "social_graph",
+    title: "Follow topic range",
+    description:
+      "Topic diversity across followed accounts’ public bios/handles.",
+    inputs: ["follows"],
+    weight: 0.35,
+    status: "active",
+    version: 1,
+  },
+  {
+    id: "follow_self_overlap",
+    axisId: "social_graph",
+    title: "Follow–self theme overlap",
+    description:
+      "Shared topics between the person’s own text and accounts they follow (curated affinity).",
+    inputs: ["follows", "bios", "captions"],
+    weight: 0.35,
+    status: "active",
+    version: 1,
+  },
 ] as const;
 
 export function listTasteSignals(

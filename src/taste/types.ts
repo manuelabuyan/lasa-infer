@@ -12,6 +12,7 @@ export type TasteSignalInput =
   | "captions"
   | "tags"
   | "link_snapshots"
+  | "follows"
   | "derived";
 
 /** Declarative axis — edit TASTE_AXES to add/remove/toggle dimensions. */

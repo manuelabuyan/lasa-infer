@@ -101,10 +101,10 @@ export const TASTE_AXES: readonly TasteAxisDef[] = [
     id: "social_graph",
     label: "Social graph",
     description:
-      "Reserved: taste implied by follows and boosts (needs graph APIs).",
-    status: "stub",
-    version: 1,
-    order: 120,
+      "Taste implied by accounts the person follows (public following lists / embedded graph).",
+    status: "active",
+    version: 2,
+    order: 90,
   },
   {
     id: "tone",

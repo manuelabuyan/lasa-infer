@@ -181,3 +181,50 @@ test("image palette can tint colour without bio text", () => {
     `expected image influence: ${warm.colour.summary}`,
   );
 });
+
+test("follow graph influences social_graph axis and colour text", () => {
+  const withFollows = scoreTaste({
+    snapshots: [
+      {
+        url: "https://instagram.com/filmer",
+        platform: "instagram",
+        contentKind: "profile",
+        access: "public_meta",
+        title: "35mm film photographer",
+        description: "Analog darkroom",
+        textSignals: ["35mm film photographer", "Analog darkroom"],
+        notes: [],
+        fetchedAt: new Date().toISOString(),
+        handle: "filmer",
+        follows: [
+          {
+            handle: "magnumphotos",
+            platform: "instagram",
+            displayName: "Magnum",
+            bio: "Documentary photography and photojournalism",
+            source: "embedded",
+          },
+          {
+            handle: "criterion",
+            platform: "instagram",
+            bio: "Cinema film archive classic movies",
+            source: "embedded",
+          },
+          {
+            handle: "analogforever",
+            platform: "instagram",
+            bio: "35mm film community darkroom",
+            source: "public_following",
+          },
+        ],
+      },
+    ],
+  });
+
+  const graph = withFollows.axes.find((a) => a.axisId === "social_graph");
+  assert.ok(graph && graph.status === "active");
+  assert.ok(graph.score !== null && graph.score > 0.2, `social_graph score ${graph?.score}`);
+  const vol = graph.signals.find((s) => s.signalId === "follow_volume");
+  assert.ok(vol && vol.score > 0);
+  assert.ok(withFollows.colour.hex.match(/^#[0-9A-F]{6}$/i));
+});

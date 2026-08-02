@@ -55,6 +55,7 @@ export type {
   Evidence,
   Explanation,
   FactorHit,
+  FollowItem,
   InsightSnapshot,
   PlatformId,
   StageParams,

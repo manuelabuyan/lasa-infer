@@ -26,6 +26,20 @@ export interface BioItem {
 }
 
 /**
+ * An account the person follows (or appears to follow from public HTML).
+ * Used as a second taste channel: who you follow shapes inferred taste.
+ */
+export interface FollowItem {
+  handle: string;
+  platform: PlatformId;
+  displayName?: string;
+  /** Public bio / description of the followed account when available. */
+  bio?: string;
+  /** How this edge was observed. */
+  source?: "public_following" | "embedded" | "inferred";
+}
+
+/**
  * Normalized input to the open algorithm.
  * Built by the private app after OAuth sync — never includes tokens.
  */
@@ -33,6 +47,8 @@ export interface Evidence {
   platforms: PlatformId[];
   bios?: BioItem[];
   posts?: ContentItem[];
+  /** Accounts followed by the linked profiles (public scrape / graph). */
+  follows?: FollowItem[];
 }
 
 /** One measurable signal used when forming a conclusion. */

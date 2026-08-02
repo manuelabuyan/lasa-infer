@@ -1,4 +1,10 @@
-import type { BioItem, ContentItem, Evidence, PlatformId } from "./types.js";
+import type {
+  BioItem,
+  ContentItem,
+  Evidence,
+  FollowItem,
+  PlatformId,
+} from "./types.js";
 
 /**
  * How much we could learn from a pasted URL without OAuth.
@@ -66,6 +72,11 @@ export interface LinkSnapshot {
   author?: string;
   /** Free-text signals collected for later taste factors. */
   textSignals: string[];
+  /**
+   * Public following list (handles + optional bios) when scrape finds them.
+   * Open algorithm uses this as a taste weight — not platform type.
+   */
+  follows?: FollowItem[];
   /** Optional machine notes (login wall, empty meta, …). */
   notes: string[];
   fetchedAt: string;
@@ -94,6 +105,8 @@ export function evidenceFromLinkSnapshots(
   const platforms = new Set<PlatformId>();
   const bios: BioItem[] = [];
   const posts: ContentItem[] = [];
+  const follows: FollowItem[] = [];
+  const seenFollow = new Set<string>();
 
   for (const snap of snapshots) {
     platforms.add(snap.platform);
@@ -131,13 +144,22 @@ export function evidenceFromLinkSnapshots(
       if (caption) item.caption = caption;
       posts.push(item);
     }
+
+    for (const f of snap.follows ?? []) {
+      const key = `${f.platform}:${f.handle.toLowerCase()}`;
+      if (seenFollow.has(key)) continue;
+      seenFollow.add(key);
+      follows.push(f);
+    }
   }
 
-  return {
+  const out: Evidence = {
     platforms: [...platforms],
     bios,
     posts,
   };
+  if (follows.length > 0) out.follows = follows;
+  return out;
 }
 
 /** Rough richness score for UI / stage hints (0–1). */
@@ -149,6 +171,9 @@ export function linkSnapshotRichness(snap: LinkSnapshot): number {
   if (snap.imageUrl) score += 0.08;
   if (snap.imageSignals && snap.imageSignals.confidence > 0.2) score += 0.18;
   if (snap.textSignals.length > 0) score += 0.2;
+  if (snap.follows && snap.follows.length > 0) {
+    score += Math.min(0.2, 0.05 + snap.follows.length * 0.01);
+  }
   if (snap.access === "public_meta") score += 0.15;
   else if (snap.access === "partial") score += 0.05;
   return Math.max(0, Math.min(1, score));
