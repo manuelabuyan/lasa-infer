@@ -28,6 +28,7 @@ export interface BioItem {
 /**
  * An account the person follows (or appears to follow from public HTML).
  * Used as a second taste channel: who you follow shapes inferred taste.
+ * When deep-scraped, carries their public text/image evidence too.
  */
 export interface FollowItem {
   handle: string;
@@ -37,6 +38,17 @@ export interface FollowItem {
   bio?: string;
   /** How this edge was observed. */
   source?: "public_following" | "embedded" | "inferred";
+  /** Canonical public profile URL when known. */
+  profileUrl?: string;
+  /** Deep-scrape of the followee’s public page (title, captions, etc.). */
+  textSignals?: string[];
+  imageUrl?: string;
+  /** Palette from their public preview image. */
+  imageSignals?: import("./linkEvidence.js").ImagePaletteSignal;
+  access?: import("./linkEvidence.js").LinkAccess;
+  /** pending | ready | error | skipped */
+  scrapeStatus?: "pending" | "ready" | "error" | "skipped";
+  scrapeError?: string;
 }
 
 /**

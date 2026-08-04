@@ -150,6 +150,34 @@ export function evidenceFromLinkSnapshots(
       if (seenFollow.has(key)) continue;
       seenFollow.add(key);
       follows.push(f);
+
+      // Deep-scraped followees contribute as evidence bios/posts (taste of who you follow)
+      const followBits = [
+        f.displayName,
+        f.bio,
+        ...(f.textSignals ?? []),
+      ]
+        .filter(Boolean)
+        .join(" · ")
+        .trim();
+      if (followBits) {
+        bios.push({
+          platform: f.platform,
+          text: `follow:@${f.handle} ${followBits}`,
+        });
+        posts.push({
+          id: `follow:${f.platform}:${f.handle}`,
+          platform: f.platform,
+          caption: followBits,
+          mediaKind: f.imageUrl ? "image" : "unknown",
+          tags: [
+            "follow",
+            f.source ?? "embedded",
+            f.scrapeStatus ?? "listed",
+            `handle:${f.handle}`,
+          ],
+        });
+      }
     }
   }
 

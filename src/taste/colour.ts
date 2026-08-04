@@ -727,18 +727,31 @@ export function inferTasteColour(
       const unit = 0.15 + q.niche * 0.85 - q.mainstream * 0.55;
       const u = Math.max(0.05, unit);
       const piece = stripPlatformChrome(
-        [f.handle, f.displayName, f.bio].filter(Boolean).join(" "),
+        [
+          f.handle,
+          f.displayName,
+          f.bio,
+          ...(f.textSignals ?? []),
+        ]
+          .filter(Boolean)
+          .join(" "),
       );
       if (!piece.trim()) continue;
-      // Repeat piece by quality (cheap weighted bag-of-words)
-      const pieceReps = Math.max(1, Math.round(u * 3));
+      // Deep-scraped follows (ready) get a boost over handle-only stubs
+      const deepBoost = f.scrapeStatus === "ready" ? 1.35 : 1;
+      const pieceReps = Math.max(1, Math.round(u * 3 * deepBoost));
       for (let i = 0; i < pieceReps; i++) followChunk += ` ${piece}`;
-      followWeightSum += u;
+      followWeightSum += u * deepBoost;
+
+      // Followee image palette samples feed continuous colour when present
+      if (f.imageSignals && f.imageSignals.confidence > 0.2) {
+        // deferred: applied below with image channel via synthetic snapshots
+      }
     }
     if (followChunk.trim()) {
       const fw =
         FOLLOW_SCALE *
-        clamp01(followWeightSum / Math.max(3, follows.length * 0.6));
+        clamp01(followWeightSum / Math.max(3, follows.length * 0.55));
       const reps = Math.max(1, Math.round(fw * 4));
       for (let i = 0; i < reps; i++) weightedText += ` ${followChunk}`;
       totalWeight += fw;
@@ -814,8 +827,47 @@ export function inferTasteColour(
     .map((s) => s.imageSignals)
     .filter((s): s is ImagePaletteSignal => Boolean(s && s.confidence > 0.15));
 
+  // Followee public images (deep scrape) — scaled lighter than self images
+  const followImageSignals: ImagePaletteSignal[] = [];
+  const followImageSnapshots: LinkSnapshot[] = [];
+  for (const f of follows) {
+    if (f.imageSignals && f.imageSignals.confidence > 0.15) {
+      followImageSignals.push(f.imageSignals);
+      followImageSnapshots.push({
+        url: f.profileUrl ?? `follow://${f.platform}/${f.handle}`,
+        platform: f.platform,
+        contentKind: "profile",
+        access: f.access ?? "partial",
+        textSignals: f.textSignals ?? [],
+        notes: [],
+        fetchedAt: new Date().toISOString(),
+        handle: f.handle,
+        imageSignals: f.imageSignals,
+      });
+    }
+  }
+
   // --- Image channel: real swatch hexes + continuous hue samples ---
   addImageSamples(samples, imageSignals, textThin, snapshots, addSample);
+  // Follow images at reduced scale (textThin=false → 0.7 already; further cut via wrapper)
+  if (followImageSignals.length > 0) {
+    addImageSamples(
+      samples,
+      followImageSignals,
+      false,
+      followImageSnapshots,
+      (hex, amount, source, detail, label, from) => {
+        addSample(
+          hex,
+          amount * 0.45,
+          source,
+          `follow ${detail}`,
+          label,
+          from ?? "follow",
+        );
+      },
+    );
+  }
 
   const contentMax = samples
     .filter((s) => s.source !== "baseline")

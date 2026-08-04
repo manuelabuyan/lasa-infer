@@ -621,12 +621,16 @@ export function scoreFollowQuality(f: {
   handle: string;
   displayName?: string;
   bio?: string;
+  textSignals?: string[];
 }): { niche: number; mainstream: number; hasText: boolean } {
-  const text = [f.handle, f.displayName, f.bio]
+  const text = [f.handle, f.displayName, f.bio, ...(f.textSignals ?? [])]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
-  const hasText = Boolean(f.bio && f.bio.trim().length > 4);
+  const hasText = Boolean(
+    (f.bio && f.bio.trim().length > 4) ||
+      (f.textSignals && f.textSignals.join(" ").length > 8),
+  );
   const handle = f.handle.toLowerCase().replace(/[^a-z0-9]/g, "");
 
   const { count: nicheLex } = countHits(text, NICHE_MARKERS);
@@ -678,10 +682,19 @@ function collectFollows(ctx: TasteScoreContext) {
 }
 
 function followText(
-  follows: Array<{ handle: string; displayName?: string; bio?: string }>,
+  follows: Array<{
+    handle: string;
+    displayName?: string;
+    bio?: string;
+    textSignals?: string[];
+  }>,
 ): string {
   return follows
-    .map((f) => [f.handle, f.displayName, f.bio].filter(Boolean).join(" "))
+    .map((f) =>
+      [f.handle, f.displayName, f.bio, ...(f.textSignals ?? [])]
+        .filter(Boolean)
+        .join(" "),
+    )
     .join(" \n ")
     .toLowerCase();
 }
